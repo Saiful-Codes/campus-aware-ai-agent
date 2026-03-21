@@ -44,3 +44,6 @@ data/private/
 
 # Mac / Linux temp
 *.swp
+
+# env file
+.env
