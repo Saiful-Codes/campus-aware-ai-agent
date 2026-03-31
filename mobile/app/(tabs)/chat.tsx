@@ -124,24 +124,14 @@ export default function ChatScreen() {
                 style={[
                   styles.headerTitle,
                   {
-                    color: colors.text,
+                    color: colors.primary,
                     fontSize: getFontSize(28, largeText),
                   },
                 ]}
               >
                 Campus AI
               </Text>
-              <Text
-                style={[
-                  styles.headerSubtitle,
-                  {
-                    color: colors.muted,
-                    fontSize: getFontSize(13, largeText),
-                  },
-                ]}
-              >
-                Ask about rooms, campus information, and PDFs
-              </Text>
+              
             </View>
 
             <Pressable
@@ -158,11 +148,7 @@ export default function ChatScreen() {
             </Pressable>
           </View>
 
-          <View style={styles.promptsRow}>
-            {quickPrompts.map((prompt) => (
-              <QuickPrompt key={prompt} label={prompt} onPress={() => handleSend(prompt)} />
-            ))}
-          </View>
+          
 
           <FlatList
             ref={listRef}
@@ -216,6 +202,12 @@ export default function ChatScreen() {
             </View>
           ) : null}
 
+          <View style={styles.promptsRow}>
+            {quickPrompts.map((prompt) => (
+              <QuickPrompt key={prompt} label={prompt} onPress={() => handleSend(prompt)} />
+            ))}
+          </View>
+
           <View
             style={[
               styles.inputContainer,
@@ -259,7 +251,7 @@ export default function ChatScreen() {
               style={[
                 styles.sendButton,
                 {
-                  backgroundColor: canSend ? colors.primary : colors.surface2,
+                  backgroundColor: colors.primary,
                   opacity: canSend ? 1 : 0.7,
                 },
               ]}
