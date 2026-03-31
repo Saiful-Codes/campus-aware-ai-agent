@@ -1,7 +1,13 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Build absolute path to backend/.env
+BASE_DIR = Path(__file__).resolve().parents[2]
+ENV_PATH = BASE_DIR / ".env"
+
+# Explicitly load backend/.env
+load_dotenv(dotenv_path=ENV_PATH)
 
 
 class Settings:
@@ -20,7 +26,7 @@ class Settings:
     INFLUXDB_ORG = os.getenv("INFLUXDB_ORG", "")
     INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "")
 
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 
 settings = Settings()
