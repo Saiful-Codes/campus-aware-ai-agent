@@ -42,6 +42,7 @@ export default function ProfileScreen() {
           >
             Coming soon
           </Text>
+
           <Text
             style={[
               styles.cardText,
@@ -51,7 +52,7 @@ export default function ProfileScreen() {
               },
             ]}
           >
-            This screen is intentionally empty for now and can later hold user profile or account features.
+            This screen is intentionally empty for now.
           </Text>
         </View>
       </View>

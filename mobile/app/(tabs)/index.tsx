@@ -45,7 +45,8 @@ export default function HomeScreen() {
               },
             ]}
           >
-            Your campus-aware assistant for room insights, La Trobe questions, and document-based conversations.
+            Your campus-aware assistant for room insights, La Trobe questions, and
+            document-based conversations.
           </Text>
         </View>
 
@@ -78,7 +79,8 @@ export default function HomeScreen() {
               },
             ]}
           >
-            Ask natural questions about campus data, room conditions, official information, and uploaded PDFs from one main assistant flow. :contentReference[oaicite:2]{index=2}
+            Ask natural questions about campus data, room conditions, official
+            information, and uploaded PDFs from one main assistant flow.
           </Text>
         </View>
 

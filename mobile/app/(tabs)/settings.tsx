@@ -122,7 +122,7 @@ export default function SettingsScreen() {
               },
             ]}
           >
-            This interface is designed for a chatbot-first campus assistant that can support telemetry, database, PDF, and official-campus information workflows. :contentReference[oaicite:3]{index=3}
+            This interface is designed for a chatbot-first campus assistant that can support telemetry, database, PDF, and official campus information workflows.
           </Text>
         </View>
       </View>
