@@ -95,14 +95,6 @@ export default function ChatScreen() {
     }, 100);
   };
 
-  const fakeAssistantReply = (query: string, fileName?: string | null) => {
-    if (fileName && !query.trim()) {
-      return `The document "${fileName}" is attached. Once backend document processing is connected, I’ll answer PDF questions here.`;
-    }
-
-    return `You asked: "${query}". This chat UI is ready to connect to the Campus AI backend for campus, room, and document-based responses.`;
-  };
-
   const handlePickDocument = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -149,18 +141,49 @@ export default function ChatScreen() {
     setMenuOpen(false);
     scrollToBottom();
 
-    setTimeout(() => {
+    try {
+      const response = await fetch(
+        `${process.env.EXPO_PUBLIC_API_BASE_URL}/chat`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ query: textToSend }),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+
       const assistantMessage: Message = {
         id: `${Date.now()}-assistant`,
         role: "assistant",
-        text: fakeAssistantReply(textToSend, attachedFileName),
+        text:
+          data.response ??
+          data.answer ??
+          data.message ??
+          "Sorry, I could not generate a response.",
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
+    } catch (error) {
+      const assistantMessage: Message = {
+        id: `${Date.now()}-assistant`,
+        role: "assistant",
+        text: "Backend connection failed.",
+      };
+
+      setMessages((prev) => [...prev, assistantMessage]);
+      console.log("Chat backend error", error);
+    } finally {
       setTyping(false);
       setAttachedFileName(null);
       scrollToBottom();
-    }, 900);
+    }
   };
 
   return (
@@ -306,7 +329,8 @@ export default function ChatScreen() {
                   },
                 ]}
               >
-                Hi, I’m Campus AI. Ask me about rooms, campus information, or uploaded PDF documents.
+                Hi, I’m Campus AI. Ask me about rooms, campus information, or
+                uploaded PDF documents.
               </Text>
             </View>
 
