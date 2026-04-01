@@ -1,84 +1,111 @@
-import { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ActivityIndicator } from "react-native";
-import { fetchHealth } from "@/services/api";
+import { router } from "expo-router";
+import React from "react";
+import { Image, Pressable, SafeAreaView, StyleSheet, Text, View } from "react-native";
+import { getFontSize, palette } from "../../src/constants/theme";
+import { useAppSettings } from "../../src/context/AppSettingsContext";
 
 export default function HomeScreen() {
-  const [loading, setLoading] = useState(true);
-  const [healthData, setHealthData] = useState<any>(null);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    const loadHealth = async () => {
-      try {
-        const data = await fetchHealth();
-        setHealthData(data);
-      } catch (err) {
-        console.log("FETCH ERROR:", err);
-        setError(err instanceof Error ? err.message : "Unknown error");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadHealth();
-  }, []);
+  const { themeMode, largeText } = useAppSettings();
+  const colors = palette[themeMode];
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Campus-Aware AI Agent</Text>
+    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
+      <View style={styles.container}>
+        
+        <View style={styles.heroSection}>
+          {/* Logo */}
+          <Image
+            source={require("../../assets/images/latrobe-logo.png")}
+            style={styles.logo}
+          />
 
-      {loading && <ActivityIndicator size="large" />}
+          {/* Title */}
+          <Text
+            style={[
+              styles.brandTitle,
+              {
+                color: colors.primary,
+                fontSize: getFontSize(34, largeText),
+              },
+            ]}
+          >
+            Campus AI
+          </Text>
 
-      {!loading && healthData && (
-        <View style={styles.card}>
-          <Text style={styles.success}>Backend connected</Text>
-          <Text>Status: {healthData.status}</Text>
-          <Text>Environment: {healthData.environment}</Text>
-          <Text>Port: {healthData.port}</Text>
+          {/* ✅ Small description (added back) */}
+          <Text
+            style={[
+              styles.subtitle,
+              {
+                color: colors.muted,
+                fontSize: getFontSize(15, largeText),
+              },
+            ]}
+          >
+            Your campus-aware assistant for room insights, La Trobe questions, and document-based conversations.
+          </Text>
         </View>
-      )}
 
-      {!loading && error ? (
-        <View style={styles.card}>
-          <Text style={styles.error}>Connection failed</Text>
-          <Text>{error}</Text>
-        </View>
-      ) : null}
-    </View>
+        {/* Button */}
+        <Pressable
+          style={[styles.button, { backgroundColor: colors.primary }]}
+          onPress={() => router.push("/chat")}
+        >
+          <Text
+            style={[
+              styles.buttonText,
+              {
+                color: colors.white,
+                fontSize: getFontSize(16, largeText),
+              },
+            ]}
+          >
+            Get Started
+          </Text>
+        </Pressable>
+
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+  },
   container: {
     flex: 1,
-    backgroundColor: "#fff",
+    paddingHorizontal: 24,
+    paddingTop: 40,
+    paddingBottom: 30,
+    justifyContent: "space-between",
+  },
+  heroSection: {
+    alignItems: "center",
+    marginTop: 80,
+  },
+  logo: {
+    width: 160,
+    height: 90,
+    resizeMode: "contain",
+    marginBottom: 24,
+  },
+  brandTitle: {
+    fontWeight: "900",
+  },
+  subtitle: {
+    textAlign: "center",
+    marginTop: 12,
+    lineHeight: 22,
+    maxWidth: 320,
+  },
+  button: {
+    borderRadius: 18,
+    paddingVertical: 18,
     alignItems: "center",
     justifyContent: "center",
-    padding: 24,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: "700",
-    marginBottom: 20,
-  },
-  card: {
-    width: "100%",
-    maxWidth: 320,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 12,
-    backgroundColor: "#f9f9f9",
-    gap: 8,
-  },
-  success: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "green",
-  },
-  error: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "red",
+  buttonText: {
+    fontWeight: "800",
   },
 });
