@@ -1,6 +1,10 @@
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { AppSettingsProvider, useAppSettings } from "../src/context/AppSettingsContext";
+import {
+  AppSettingsProvider,
+  useAppSettings,
+} from "../src/context/AppSettingsContext";
+import { AuthProvider } from "../src/context/AuthContext"; // ✅ add this
 
 function LayoutContent() {
   const { themeMode } = useAppSettings();
@@ -15,8 +19,10 @@ function LayoutContent() {
 
 export default function RootLayout() {
   return (
-    <AppSettingsProvider>
-      <LayoutContent />
-    </AppSettingsProvider>
+    <AuthProvider> {/* ✅ wrap auth FIRST */}
+      <AppSettingsProvider>
+        <LayoutContent />
+      </AppSettingsProvider>
+    </AuthProvider>
   );
 }

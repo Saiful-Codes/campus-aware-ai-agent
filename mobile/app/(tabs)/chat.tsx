@@ -17,7 +17,6 @@ import {
   View,
 } from "react-native";
 import ChatBubble from "../../src/components/ChatBubble";
-import QuickPrompt from "../../src/components/QuickPrompt";
 import { getFontSize, palette } from "../../src/constants/theme";
 import { useAppSettings } from "../../src/context/AppSettingsContext";
 
@@ -27,12 +26,6 @@ type Message = {
   text: string;
 };
 
-const quickPrompts = [
-  "Does PW-202 get stuffy in the afternoon?",
-  "Tell me about La Trobe study spaces",
-  "Summarise this uploaded PDF",
-  "Where can I find campus maps?",
-];
 
 const RECENT_CHATS_KEY = "campus_ai_recent_chats";
 
@@ -386,11 +379,7 @@ export default function ChatScreen() {
               </View>
             ) : null}
 
-            <View style={styles.promptsRow}>
-              {quickPrompts.map((prompt) => (
-                <QuickPrompt key={prompt} label={prompt} onPress={() => handleSend(prompt)} />
-              ))}
-            </View>
+            
 
             <View
               style={[

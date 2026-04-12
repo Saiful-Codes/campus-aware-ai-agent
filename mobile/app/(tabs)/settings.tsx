@@ -1,11 +1,40 @@
 import React from "react";
-import { SafeAreaView, StyleSheet, Switch, Text, View } from "react-native";
+import {
+  SafeAreaView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
+  Pressable,
+  Alert,
+} from "react-native";
+import { router } from "expo-router";
 import { getFontSize, palette } from "../../src/constants/theme";
 import { useAppSettings } from "../../src/context/AppSettingsContext";
+import { useAuth } from "../../src/context/AuthContext"; // ✅ add this
 
 export default function SettingsScreen() {
   const { themeMode, largeText, setThemeMode, setLargeText } = useAppSettings();
+  const { logout, user } = useAuth(); // ✅ get logout + user
   const colors = palette[themeMode];
+
+  const handleLogout = async () => {
+    Alert.alert("Logout", "Are you sure you want to logout?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Logout",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await logout();
+            router.replace("/"); // go back to home
+          } catch (error: any) {
+            Alert.alert("Error", error.message || "Logout failed");
+          }
+        },
+      },
+    ]);
+  };
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
@@ -22,6 +51,37 @@ export default function SettingsScreen() {
           Settings
         </Text>
 
+        {/* 🔐 Account Info */}
+        {user && (
+          <View
+            style={[
+              styles.card,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.cardTitle,
+                { color: colors.text, fontSize: getFontSize(17, largeText) },
+              ]}
+            >
+              Logged in as
+            </Text>
+            <Text
+              style={[
+                styles.cardText,
+                { color: colors.muted, fontSize: getFontSize(14, largeText) },
+              ]}
+            >
+              {user.email}
+            </Text>
+          </View>
+        )}
+
+        {/* 🌙 Dark Mode */}
         <View
           style={[
             styles.card,
@@ -59,6 +119,7 @@ export default function SettingsScreen() {
           />
         </View>
 
+        {/* 🔠 Large Text */}
         <View
           style={[
             styles.card,
@@ -93,6 +154,7 @@ export default function SettingsScreen() {
           <Switch value={largeText} onValueChange={setLargeText} />
         </View>
 
+        {/* ℹ️ About */}
         <View
           style={[
             styles.card,
@@ -125,6 +187,29 @@ export default function SettingsScreen() {
             This interface is designed for a chatbot-first campus assistant that can support telemetry, database, PDF, and official campus information workflows.
           </Text>
         </View>
+
+        {/* 🚪 Logout */}
+        {user && (
+          <Pressable
+            style={[
+              styles.logoutButton,
+              { backgroundColor: colors.primary },
+            ]}
+            onPress={handleLogout}
+          >
+            <Text
+              style={[
+                styles.logoutText,
+                {
+                  color: colors.white,
+                  fontSize: getFontSize(16, largeText),
+                },
+              ]}
+            >
+              Logout
+            </Text>
+          </Pressable>
+        )}
       </View>
     </SafeAreaView>
   );
@@ -157,5 +242,15 @@ const styles = StyleSheet.create({
   cardText: {
     lineHeight: 22,
     marginBottom: 14,
+  },
+  logoutButton: {
+    marginTop: 10,
+    borderRadius: 18,
+    paddingVertical: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  logoutText: {
+    fontWeight: "800",
   },
 });
