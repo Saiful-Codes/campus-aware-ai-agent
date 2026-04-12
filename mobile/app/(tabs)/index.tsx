@@ -1,6 +1,13 @@
 import { router } from "expo-router";
 import React from "react";
-import { Image, Pressable, SafeAreaView, StyleSheet, Text, View } from "react-native";
+import {
+  Image,
+  Pressable,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { getFontSize, palette } from "../../src/constants/theme";
 import { useAppSettings } from "../../src/context/AppSettingsContext";
 
@@ -11,15 +18,12 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
       <View style={styles.container}>
-        
         <View style={styles.heroSection}>
-          {/* Logo */}
           <Image
             source={require("../../assets/images/latrobe-logo.png")}
             style={styles.logo}
           />
 
-          {/* Title */}
           <Text
             style={[
               styles.brandTitle,
@@ -32,7 +36,6 @@ export default function HomeScreen() {
             Campus AI
           </Text>
 
-          {/* ✅ Small description (added back) */}
           <Text
             style={[
               styles.subtitle,
@@ -42,28 +45,63 @@ export default function HomeScreen() {
               },
             ]}
           >
-            Your campus-aware assistant for room insights, La Trobe questions, and document-based conversations.
+            Your campus-aware assistant for room insights, La Trobe questions,
+            and document-based conversations.
           </Text>
         </View>
 
-        {/* Button */}
-        <Pressable
-          style={[styles.button, { backgroundColor: colors.primary }]}
-          onPress={() => router.push("/chat")}
-        >
-          <Text
-            style={[
-              styles.buttonText,
-              {
-                color: colors.white,
-                fontSize: getFontSize(16, largeText),
-              },
-            ]}
+        <View style={styles.buttonGroup}>
+          <Pressable
+            style={[styles.button, { backgroundColor: colors.primary }]}
+            onPress={() => router.push("/login")}
           >
-            Get Started
-          </Text>
-        </Pressable>
+            <Text
+              style={[
+                styles.buttonText,
+                {
+                  color: colors.white,
+                  fontSize: getFontSize(16, largeText),
+                },
+              ]}
+            >
+              Login
+            </Text>
+          </Pressable>
 
+          <Pressable
+            style={[
+              styles.outlineButton,
+              { borderColor: colors.primary, backgroundColor: colors.card },
+            ]}
+            onPress={() => router.push("/signup")}
+          >
+            <Text
+              style={[
+                styles.outlineButtonText,
+                {
+                  color: colors.primary,
+                  fontSize: getFontSize(16, largeText),
+                },
+              ]}
+            >
+              Sign Up
+            </Text>
+          </Pressable>
+
+          <Pressable onPress={() => router.push("/chat")}>
+            <Text
+              style={[
+                styles.guestText,
+                {
+                  color: colors.muted,
+                  fontSize: getFontSize(14, largeText),
+                },
+              ]}
+            >
+              Continue as Guest
+            </Text>
+          </Pressable>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -99,13 +137,32 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     maxWidth: 320,
   },
+  buttonGroup: {
+    gap: 14,
+    marginBottom: 20,
+  },
   button: {
     borderRadius: 18,
     paddingVertical: 18,
     alignItems: "center",
     justifyContent: "center",
   },
+  outlineButton: {
+    borderRadius: 18,
+    paddingVertical: 18,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+  },
   buttonText: {
     fontWeight: "800",
+  },
+  outlineButtonText: {
+    fontWeight: "800",
+  },
+  guestText: {
+    textAlign: "center",
+    marginTop: 6,
+    fontWeight: "600",
   },
 });
