@@ -4,7 +4,6 @@ import { router } from "expo-router";
 import { Menu, Plus, Send, X } from "lucide-react-native";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -24,10 +23,18 @@ type Message = {
   id: string;
   role: "user" | "assistant";
   text: string;
+  streaming?: boolean;
 };
 
-
 const RECENT_CHATS_KEY = "campus_ai_recent_chats";
+
+// Suggested prompts shown on empty state
+const SUGGESTED_PROMPTS = [
+  "Is PW-202 usually stuffy in the afternoon?",
+  "What's the CO₂ level in the library?",
+  "Which rooms have high noise levels?",
+  "Show me temperature trends today",
+];
 
 export default function ChatScreen() {
   const { themeMode, largeText } = useAppSettings();
@@ -35,7 +42,7 @@ export default function ChatScreen() {
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [typing, setTyping] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [attachedFileName, setAttachedFileName] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [recentChats, setRecentChats] = useState<string[]>([]);
@@ -43,41 +50,36 @@ export default function ChatScreen() {
   const listRef = useRef<FlatList<Message>>(null);
 
   const canSend = useMemo(
-    () => input.trim().length > 0 || !!attachedFileName,
-    [input, attachedFileName]
+    () => (input.trim().length > 0 || !!attachedFileName) && !isLoading,
+    [input, attachedFileName, isLoading]
   );
 
   useEffect(() => {
     const loadRecentChats = async () => {
       try {
         const stored = await AsyncStorage.getItem(RECENT_CHATS_KEY);
-        if (stored) {
-          setRecentChats(JSON.parse(stored));
-        }
-      } catch (error) {
-        console.log("Failed to load recent chats", error);
+        if (stored) setRecentChats(JSON.parse(stored));
+      } catch (e) {
+        console.log("Failed to load recent chats", e);
       }
     };
-
     loadRecentChats();
   }, []);
 
   const saveRecentChats = async (items: string[]) => {
     try {
       await AsyncStorage.setItem(RECENT_CHATS_KEY, JSON.stringify(items));
-    } catch (error) {
-      console.log("Failed to save recent chats", error);
+    } catch (e) {
+      console.log("Failed to save recent chats", e);
     }
   };
 
   const addRecentChat = async (text: string) => {
     if (!text.trim()) return;
-
     const updated = [
       text.trim(),
       ...recentChats.filter((item) => item !== text.trim()),
     ].slice(0, 8);
-
     setRecentChats(updated);
     await saveRecentChats(updated);
   };
@@ -85,7 +87,7 @@ export default function ChatScreen() {
   const scrollToBottom = () => {
     setTimeout(() => {
       listRef.current?.scrollToEnd({ animated: true });
-    }, 100);
+    }, 80);
   };
 
   const handlePickDocument = async () => {
@@ -95,12 +97,11 @@ export default function ChatScreen() {
         multiple: false,
         copyToCacheDirectory: true,
       });
-
       if (!result.canceled && result.assets?.length > 0) {
         setAttachedFileName(result.assets[0].name);
       }
-    } catch (error) {
-      console.log("Document picker error", error);
+    } catch (e) {
+      console.log("Document picker error", e);
     }
   };
 
@@ -108,14 +109,14 @@ export default function ChatScreen() {
     setMessages([]);
     setInput("");
     setAttachedFileName(null);
-    setTyping(false);
+    setIsLoading(false);
     setMenuOpen(false);
   };
 
   const handleSend = async (promptText?: string) => {
     const textToSend = promptText ?? input.trim();
-
     if (!textToSend && !attachedFileName) return;
+    if (isLoading) return;
 
     const userMessage: Message = {
       id: `${Date.now()}-user`,
@@ -124,14 +125,22 @@ export default function ChatScreen() {
     };
 
     setMessages((prev) => [...prev, userMessage]);
-
-    if (textToSend.trim()) {
-      await addRecentChat(textToSend.trim());
-    }
+    if (textToSend.trim()) await addRecentChat(textToSend.trim());
 
     setInput("");
-    setTyping(true);
     setMenuOpen(false);
+    setIsLoading(true);
+    scrollToBottom();
+
+    // Add a placeholder streaming message immediately — shows cursor right away
+    const assistantId = `${Date.now()}-assistant`;
+    const placeholderMessage: Message = {
+      id: assistantId,
+      role: "assistant",
+      text: "…",
+      streaming: true,
+    };
+    setMessages((prev) => [...prev, placeholderMessage]);
     scrollToBottom();
 
     try {
@@ -139,45 +148,56 @@ export default function ChatScreen() {
         `${process.env.EXPO_PUBLIC_API_BASE_URL}/chat`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ query: textToSend }),
         }
       );
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
       const data = await response.json();
+      const responseText =
+        data.response ??
+        data.answer ??
+        data.message ??
+        "Sorry, I could not generate a response.";
 
-      const assistantMessage: Message = {
-        id: `${Date.now()}-assistant`,
-        role: "assistant",
-        text:
-          data.response ??
-          data.answer ??
-          data.message ??
-          "Sorry, I could not generate a response.",
-      };
-
-      setMessages((prev) => [...prev, assistantMessage]);
-    } catch (error) {
-      const assistantMessage: Message = {
-        id: `${Date.now()}-assistant`,
-        role: "assistant",
-        text: "Backend connection failed.",
-      };
-
-      setMessages((prev) => [...prev, assistantMessage]);
-      console.log("Chat backend error", error);
-    } finally {
-      setTyping(false);
-      setAttachedFileName(null);
+      // Replace placeholder with real text, still streaming (word-by-word will play)
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId
+            ? { ...m, text: responseText, streaming: true }
+            : m
+        )
+      );
       scrollToBottom();
+    } catch (e) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId
+            ? {
+                ...m,
+                text: "⚠️ Could not reach the backend. Please check your connection.",
+                streaming: true,
+              }
+            : m
+        )
+      );
+      console.log("Chat backend error", e);
+    } finally {
+      setAttachedFileName(null);
+      setIsLoading(false);
     }
   };
+
+  const handleStreamComplete = (msgId: string) => {
+    // Mark streaming as done so cursor disappears
+    setMessages((prev) =>
+      prev.map((m) => (m.id === msgId ? { ...m, streaming: false } : m))
+    );
+  };
+
+  const isEmpty = messages.length === 0;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
@@ -187,14 +207,13 @@ export default function ChatScreen() {
       >
         <TouchableWithoutFeedback onPress={() => setMenuOpen(false)}>
           <View style={styles.container}>
+
+            {/* ── Header ── */}
             <View style={styles.header}>
               <Text
                 style={[
                   styles.headerTitle,
-                  {
-                    color: colors.primary,
-                    fontSize: getFontSize(28, largeText),
-                  },
+                  { color: colors.primary, fontSize: getFontSize(28, largeText) },
                 ]}
               >
                 Campus AI
@@ -205,76 +224,42 @@ export default function ChatScreen() {
                   onPress={() => setMenuOpen((prev) => !prev)}
                   style={[
                     styles.menuButton,
-                    {
-                      backgroundColor: colors.surface,
-                      borderColor: colors.border,
-                    },
+                    { backgroundColor: colors.surface, borderColor: colors.border },
                   ]}
                 >
                   <Menu color={colors.text} size={20} />
                 </Pressable>
 
-                {menuOpen ? (
+                {menuOpen && (
                   <View
                     style={[
                       styles.menuDropdown,
-                      {
-                        backgroundColor: colors.card,
-                        borderColor: colors.border,
-                      },
+                      { backgroundColor: colors.card, borderColor: colors.border },
                     ]}
                   >
                     <Pressable style={styles.menuItem} onPress={handleNewChat}>
-                      <Text
-                        style={[
-                          styles.menuText,
-                          { color: colors.text, fontSize: getFontSize(14, largeText) },
-                        ]}
-                      >
+                      <Text style={[styles.menuText, { color: colors.text, fontSize: getFontSize(14, largeText) }]}>
                         New Chat
                       </Text>
                     </Pressable>
 
                     <Pressable
                       style={styles.menuItem}
-                      onPress={() => {
-                        setMenuOpen(false);
-                        router.push("/settings");
-                      }}
+                      onPress={() => { setMenuOpen(false); router.push("/settings"); }}
                     >
-                      <Text
-                        style={[
-                          styles.menuText,
-                          { color: colors.text, fontSize: getFontSize(14, largeText) },
-                        ]}
-                      >
+                      <Text style={[styles.menuText, { color: colors.text, fontSize: getFontSize(14, largeText) }]}>
                         Settings
                       </Text>
                     </Pressable>
 
-                    <View
-                      style={[
-                        styles.menuDivider,
-                        { backgroundColor: colors.border },
-                      ]}
-                    />
+                    <View style={[styles.menuDivider, { backgroundColor: colors.border }]} />
 
-                    <Text
-                      style={[
-                        styles.menuSectionTitle,
-                        { color: colors.muted, fontSize: getFontSize(12, largeText) },
-                      ]}
-                    >
+                    <Text style={[styles.menuSectionTitle, { color: colors.muted, fontSize: getFontSize(12, largeText) }]}>
                       Recent Chats
                     </Text>
 
                     {recentChats.length === 0 ? (
-                      <Text
-                        style={[
-                          styles.menuEmptyText,
-                          { color: colors.muted, fontSize: getFontSize(13, largeText) },
-                        ]}
-                      >
+                      <Text style={[styles.menuEmptyText, { color: colors.muted, fontSize: getFontSize(13, largeText) }]}>
                         No recent chats
                       </Text>
                     ) : (
@@ -282,16 +267,10 @@ export default function ChatScreen() {
                         <Pressable
                           key={`${chat}-${index}`}
                           style={styles.menuItem}
-                          onPress={() => {
-                            setInput(chat);
-                            setMenuOpen(false);
-                          }}
+                          onPress={() => { setInput(chat); setMenuOpen(false); }}
                         >
                           <Text
-                            style={[
-                              styles.menuText,
-                              { color: colors.text, fontSize: getFontSize(13, largeText) },
-                            ]}
+                            style={[styles.menuText, { color: colors.text, fontSize: getFontSize(13, largeText) }]}
                             numberOfLines={1}
                           >
                             {chat}
@@ -300,105 +279,80 @@ export default function ChatScreen() {
                       ))
                     )}
                   </View>
-                ) : null}
+                )}
               </View>
             </View>
 
-            <View
-              style={[
-                styles.welcomeBox,
-                {
-                  backgroundColor: colors.card,
-                  borderColor: colors.border,
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.welcomeText,
-                  {
-                    color: colors.text,
-                    fontSize: getFontSize(15, largeText),
-                  },
-                ]}
-              >
-                Hi, I’m Campus AI. Ask me about rooms, campus information, or
-                uploaded PDF documents.
+            {/* ── Welcome box (always visible) ── */}
+            <View style={[styles.welcomeBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.welcomeText, { color: colors.text, fontSize: getFontSize(15, largeText) }]}>
+                Hi, I'm Campus AI. Ask me about rooms, campus information, or uploaded PDF documents.
               </Text>
             </View>
 
+            {/* ── Empty state: suggested prompts ── */}
+            {isEmpty && (
+              <View style={styles.suggestionsContainer}>
+                <Text style={[styles.suggestionsLabel, { color: colors.muted, fontSize: getFontSize(12, largeText) }]}>
+                  TRY ASKING
+                </Text>
+                <View style={styles.suggestionsGrid}>
+                  {SUGGESTED_PROMPTS.map((prompt) => (
+                    <Pressable
+                      key={prompt}
+                      style={[styles.suggestionChip, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                      onPress={() => handleSend(prompt)}
+                    >
+                      <Text
+                        style={[styles.suggestionText, { color: colors.text, fontSize: getFontSize(13, largeText) }]}
+                        numberOfLines={2}
+                      >
+                        {prompt}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {/* ── Message list ── */}
             <FlatList
               ref={listRef}
               data={messages}
               keyExtractor={(item) => item.id}
-              renderItem={({ item }) => <ChatBubble role={item.role} text={item.text} />}
+              renderItem={({ item }) => (
+                <ChatBubble
+                  role={item.role}
+                  text={item.text}
+                  streaming={item.streaming}
+                  onStreamComplete={() => handleStreamComplete(item.id)}
+                />
+              )}
               contentContainerStyle={styles.chatList}
               showsVerticalScrollIndicator={false}
+              onContentSizeChange={scrollToBottom}
             />
 
-            {typing ? (
-              <View style={styles.typingRow}>
-                <ActivityIndicator color={colors.primary} />
+            {/* ── Attachment chip ── */}
+            {attachedFileName && (
+              <View style={[styles.attachmentChip, { backgroundColor: colors.primarySoft, borderColor: colors.border }]}>
                 <Text
-                  style={[
-                    styles.typingText,
-                    { color: colors.muted, fontSize: getFontSize(13, largeText) },
-                  ]}
-                >
-                  Campus AI is typing...
-                </Text>
-              </View>
-            ) : null}
-
-            {attachedFileName ? (
-              <View
-                style={[
-                  styles.attachmentChip,
-                  {
-                    backgroundColor: colors.primarySoft,
-                    borderColor: colors.border,
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.attachmentText,
-                    {
-                      color: colors.text,
-                      fontSize: getFontSize(13, largeText),
-                    },
-                  ]}
+                  style={[styles.attachmentText, { color: colors.text, fontSize: getFontSize(13, largeText) }]}
                   numberOfLines={1}
                 >
                   {attachedFileName}
                 </Text>
-
                 <Pressable onPress={() => setAttachedFileName(null)}>
                   <X color={colors.text} size={16} />
                 </Pressable>
               </View>
-            ) : null}
+            )}
 
-            
-
-            <View
-              style={[
-                styles.inputContainer,
-                {
-                  backgroundColor: colors.surface,
-                  borderColor: colors.border,
-                },
-              ]}
-            >
+            {/* ── Input bar ── */}
+            <View style={[styles.inputContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <Pressable
                 onPress={handlePickDocument}
-                style={[
-                  styles.iconButton,
-                  {
-                    backgroundColor: colors.surface2,
-                    borderColor: colors.border,
-                  },
-                ]}
+                style={[styles.iconButton, { backgroundColor: colors.surface2, borderColor: colors.border }]}
               >
                 <Plus color={colors.text} size={18} />
               </Pressable>
@@ -408,30 +362,21 @@ export default function ChatScreen() {
                 onChangeText={setInput}
                 placeholder="Ask a question..."
                 placeholderTextColor={colors.muted}
-                style={[
-                  styles.input,
-                  {
-                    color: colors.text,
-                    fontSize: getFontSize(15, largeText),
-                  },
-                ]}
+                style={[styles.input, { color: colors.text, fontSize: getFontSize(15, largeText) }]}
                 multiline
+                onSubmitEditing={() => handleSend()}
+                blurOnSubmit={false}
               />
 
               <Pressable
                 onPress={() => handleSend()}
                 disabled={!canSend}
-                style={[
-                  styles.sendButton,
-                  {
-                    backgroundColor: colors.primary,
-                    opacity: canSend ? 1 : 0.7,
-                  },
-                ]}
+                style={[styles.sendButton, { backgroundColor: colors.primary, opacity: canSend ? 1 : 0.4 }]}
               >
                 <Send color={colors.white} size={18} />
               </Pressable>
             </View>
+
           </View>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
@@ -440,9 +385,7 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-  },
+  safe: { flex: 1 },
   container: {
     flex: 1,
     paddingHorizontal: 16,
@@ -456,13 +399,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     zIndex: 20,
   },
-  headerTitle: {
-    fontWeight: "900",
-  },
-  menuWrapper: {
-    position: "relative",
-    zIndex: 30,
-  },
+  headerTitle: { fontWeight: "900" },
+  menuWrapper: { position: "relative", zIndex: 30 },
   menuButton: {
     width: 42,
     height: 42,
@@ -486,57 +424,52 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 6,
   },
-  menuItem: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  menuText: {
-    fontWeight: "500",
-  },
-  menuDivider: {
-    height: 1,
-    marginVertical: 6,
-    marginHorizontal: 12,
-  },
+  menuItem: { paddingHorizontal: 14, paddingVertical: 10 },
+  menuText: { fontWeight: "500" },
+  menuDivider: { height: 1, marginVertical: 6, marginHorizontal: 12 },
   menuSectionTitle: {
     fontWeight: "700",
     paddingHorizontal: 14,
     paddingTop: 4,
     paddingBottom: 6,
     textTransform: "uppercase",
+    letterSpacing: 0.6,
   },
-  menuEmptyText: {
-    paddingHorizontal: 14,
-    paddingBottom: 8,
-  },
+  menuEmptyText: { paddingHorizontal: 14, paddingBottom: 8 },
   welcomeBox: {
     borderRadius: 20,
     borderWidth: 1,
     padding: 16,
-    marginBottom: 12,
+    marginBottom: 14,
   },
-  welcomeText: {
-    fontWeight: "500",
-    lineHeight: 22,
+  welcomeText: { fontWeight: "500", lineHeight: 22 },
+  suggestionsContainer: { marginBottom: 10 },
+  suggestionsLabel: {
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    marginBottom: 8,
+    paddingHorizontal: 2,
   },
-  promptsRow: {
+  suggestionsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    marginBottom: 8,
+    gap: 8,
+  },
+  suggestionChip: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    width: "47%",
+  },
+  suggestionText: {
+    fontWeight: "500",
+    lineHeight: 18,
   },
   chatList: {
     paddingTop: 8,
     paddingBottom: 12,
     flexGrow: 1,
-  },
-  typingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-    gap: 8,
-  },
-  typingText: {
-    fontWeight: "500",
   },
   attachmentChip: {
     marginBottom: 10,
@@ -549,10 +482,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 10,
   },
-  attachmentText: {
-    flex: 1,
-    fontWeight: "600",
-  },
+  attachmentText: { flex: 1, fontWeight: "600" },
   inputContainer: {
     borderRadius: 22,
     borderWidth: 1,
