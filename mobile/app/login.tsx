@@ -16,7 +16,7 @@ import { useAuth } from "../src/context/AuthContext";
 
 export default function LoginScreen() {
   const { themeMode, largeText } = useAppSettings();
-  const { login } = useAuth();
+  const { login, continueAsGuest } = useAuth();
   const colors = palette[themeMode];
 
   const [email, setEmail] = useState("");
@@ -114,6 +114,22 @@ export default function LoginScreen() {
               ]}
             >
               Don’t have an account? Sign Up
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => {
+              continueAsGuest();
+              router.replace("/chat");
+            }}
+          >
+            <Text
+              style={[
+                styles.link,
+                { color: colors.muted, fontSize: getFontSize(14, largeText) },
+              ]}
+            >
+              Continue as Guest
             </Text>
           </Pressable>
         </View>

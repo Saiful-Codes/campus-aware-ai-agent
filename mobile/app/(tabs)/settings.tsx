@@ -7,6 +7,7 @@ import {
   View,
   Pressable,
   Alert,
+  Platform,
 } from "react-native";
 import { router } from "expo-router";
 import { getFontSize, palette } from "../../src/constants/theme";
@@ -17,20 +18,32 @@ export default function SettingsScreen() {
   const { themeMode, largeText, setThemeMode, setLargeText } = useAppSettings();
   const { logout, user } = useAuth(); // ✅ get logout + user
   const colors = palette[themeMode];
+  console.log("[SettingsScreen] user:", user);
+
+  const performLogout = async () => {
+    try {
+      await logout();
+      router.replace("/login");
+    } catch (error: any) {
+      Alert.alert("Error", error?.message || "Logout failed");
+    }
+  };
 
   const handleLogout = async () => {
+    if (Platform.OS === "web") {
+      const confirmed = window.confirm("Are you sure you want to logout?");
+      if (!confirmed) return;
+      await performLogout();
+      return;
+    }
+
     Alert.alert("Logout", "Are you sure you want to logout?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Logout",
         style: "destructive",
-        onPress: async () => {
-          try {
-            await logout();
-            router.replace("/"); // go back to home
-          } catch (error: any) {
-            Alert.alert("Error", error.message || "Logout failed");
-          }
+        onPress: () => {
+          performLogout();
         },
       },
     ]);

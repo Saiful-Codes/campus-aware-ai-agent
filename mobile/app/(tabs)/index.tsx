@@ -10,9 +10,11 @@ import {
 } from "react-native";
 import { getFontSize, palette } from "../../src/constants/theme";
 import { useAppSettings } from "../../src/context/AppSettingsContext";
+import { useAuth } from "../../src/context/AuthContext";
 
 export default function HomeScreen() {
   const { themeMode, largeText } = useAppSettings();
+  const { continueAsGuest } = useAuth();
   const colors = palette[themeMode];
 
   return (
@@ -88,7 +90,12 @@ export default function HomeScreen() {
             </Text>
           </Pressable>
 
-          <Pressable onPress={() => router.push("/chat")}>
+          <Pressable
+            onPress={() => {
+              continueAsGuest();
+              router.replace("/chat");
+            }}
+          >
             <Text
               style={[
                 styles.guestText,

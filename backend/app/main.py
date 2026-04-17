@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.config import settings
-from app.api.chat import router as chat_router
+from backend.app.core.config import settings
+from backend.app.api.chat import router as chat_router
 
 app = FastAPI(title="Campus-Aware Intelligent AI Agent API")
 
