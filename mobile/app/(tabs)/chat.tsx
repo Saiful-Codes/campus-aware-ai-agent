@@ -18,6 +18,9 @@ import {
 import ChatBubble from "../../src/components/ChatBubble";
 import { getFontSize, palette } from "../../src/constants/theme";
 import { useAppSettings } from "../../src/context/AppSettingsContext";
+import { useAuth } from "../../src/context/AuthContext";
+import { db } from "../../src/lib/firebase";
+import { addDoc, collection, getDocs, orderBy, query, Timestamp } from "firebase/firestore";
 
 type Message = {
   id: string;
@@ -39,6 +42,7 @@ const SUGGESTED_PROMPTS = [
 export default function ChatScreen() {
   const { themeMode, largeText } = useAppSettings();
   const colors = palette[themeMode];
+  const { logout, user, isGuest } = useAuth();
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -65,6 +69,38 @@ export default function ChatScreen() {
     };
     loadRecentChats();
   }, []);
+
+  useEffect(() => {
+    setMessages([]);
+    setInput("");
+    setAttachedFileName(null);
+    setIsLoading(false);
+  }, [user, isGuest]);
+
+  useEffect(() => {
+    if (!user || isGuest) return;
+    const loadChatHistory = async () => {
+      try {
+        const q = query(
+          collection(db, "users", user.uid, "chats", "default", "messages"),
+          orderBy("timestamp", "asc")
+        );
+        const querySnapshot = await getDocs(q);
+        const loadedMessages = querySnapshot.docs.map((doc) => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            role: data.role,
+            text: data.text,
+          };
+        });
+        setMessages(loadedMessages);
+      } catch (error) {
+        console.log("Failed to load chat history", error);
+      }
+    };
+    loadChatHistory();
+  }, [user, isGuest]);
 
   const saveRecentChats = async (items: string[]) => {
     try {
@@ -125,6 +161,17 @@ export default function ChatScreen() {
     };
 
     setMessages((prev) => [...prev, userMessage]);
+    if (user && !isGuest) {
+      try {
+        await addDoc(collection(db, "users", user.uid, "chats", "default", "messages"), {
+          role: "user",
+          text: userMessage.text,
+          timestamp: Timestamp.now(),
+        });
+      } catch (error) {
+        console.log("Failed to save user message", error);
+      }
+    }
     if (textToSend.trim()) await addRecentChat(textToSend.trim());
 
     setInput("");
@@ -170,19 +217,42 @@ export default function ChatScreen() {
             : m
         )
       );
+      if (user && !isGuest) {
+        try {
+          await addDoc(collection(db, "users", user.uid, "chats", "default", "messages"), {
+            role: "assistant",
+            text: responseText,
+            timestamp: Timestamp.now(),
+          });
+        } catch (error) {
+          console.log("Failed to save assistant message", error);
+        }
+      }
       scrollToBottom();
     } catch (e) {
+      const errorText = "⚠️ Could not reach the backend. Please check your connection.";
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantId
             ? {
                 ...m,
-                text: "⚠️ Could not reach the backend. Please check your connection.",
+                text: errorText,
                 streaming: true,
               }
             : m
         )
       );
+      if (user && !isGuest) {
+        try {
+          await addDoc(collection(db, "users", user.uid, "chats", "default", "messages"), {
+            role: "assistant",
+            text: errorText,
+            timestamp: Timestamp.now(),
+          });
+        } catch (error) {
+          console.log("Failed to save assistant error message", error);
+        }
+      }
       console.log("Chat backend error", e);
     } finally {
       setAttachedFileName(null);
@@ -254,6 +324,22 @@ export default function ChatScreen() {
 
                     <View style={[styles.menuDivider, { backgroundColor: colors.border }]} />
 
+                    <Pressable
+                      style={styles.menuItem}
+                      onPress={async () => {
+                        setMenuOpen(false);
+                        await logout();
+                        setMessages([]);
+                        router.replace("/login");
+                      }}
+                    >
+                      <Text style={[styles.menuText, { color: colors.text, fontSize: getFontSize(14, largeText) }]}>
+                        Log Out
+                      </Text>
+                    </Pressable>
+
+                    <View style={[styles.menuDivider, { backgroundColor: colors.border }]} />
+
                     <Text style={[styles.menuSectionTitle, { color: colors.muted, fontSize: getFontSize(12, largeText) }]}>
                       Recent Chats
                     </Text>
@@ -286,7 +372,7 @@ export default function ChatScreen() {
             {/* ── Welcome box (always visible) ── */}
             <View style={[styles.welcomeBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <Text style={[styles.welcomeText, { color: colors.text, fontSize: getFontSize(15, largeText) }]}>
-                Hi, I'm Campus AI. Ask me about rooms, campus information, or uploaded PDF documents.
+                Hi, I am Campus AI. Ask me about rooms, campus information, or uploaded PDF documents.
               </Text>
             </View>
 
