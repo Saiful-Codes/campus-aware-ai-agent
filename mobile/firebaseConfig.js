@@ -7,7 +7,7 @@ import { getAuth } from "firebase/auth";
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyB4pdllgZ15BONtUMNlm4SXKdauq-9wwrk",
+  apiKey: "AIzaSyClGXJOVV5Cwu-vZbs7ZWpqbeT-28MM00c",
   authDomain: "campus-ai-agent.firebaseapp.com",
   projectId: "campus-ai-agent",
   storageBucket: "campus-ai-agent.firebasestorage.app",
