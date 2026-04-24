@@ -47,3 +47,6 @@ data/private/
 
 # env file
 .env
+
+# Rag pdfs 
+backend/ragData/
