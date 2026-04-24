@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
-
+from fastapi import HTTPException
 from app.rag.rag_pipeline import generate_answer
 
 router = APIRouter()
@@ -12,7 +12,11 @@ class ChatRequest(BaseModel):
 
 
 # response endpoint
-@router.post("/chat")
+@router.post("/rag/chat")
 def chat(request: ChatRequest):
-    answer = generate_answer(request.message)
-    return {"response": answer}
+    try:
+        answer = generate_answer(request.message)
+        return {"response": answer}
+    except Exception as e:
+        print("RAG ERROR:", e)
+        return {"response": None}  # IMPORTANT

@@ -22,6 +22,7 @@ import { useAuth } from "../../src/context/AuthContext";
 import { db } from "../../src/lib/firebase";
 import { addDoc, collection, getDocs, orderBy, query, Timestamp } from "firebase/firestore";
 
+
 type Message = {
   id: string;
   role: "user" | "assistant";
@@ -151,6 +152,11 @@ export default function ChatScreen() {
 
   const handleSend = async (promptText?: string) => {
     const textToSend = promptText ?? input.trim();
+    const isDocumentQuery =
+      !!attachedFileName ||
+      textToSend.toLowerCase().includes("document") ||
+      textToSend.toLowerCase().includes("pdf") ||
+      textToSend.toLowerCase().includes("file");
     if (!textToSend && !attachedFileName) return;
     if (isLoading) return;
 
@@ -179,6 +185,7 @@ export default function ChatScreen() {
     setIsLoading(true);
     scrollToBottom();
 
+
     // Add a placeholder streaming message immediately — shows cursor right away
     const assistantId = `${Date.now()}-assistant`;
     const placeholderMessage: Message = {
@@ -191,29 +198,77 @@ export default function ChatScreen() {
     scrollToBottom();
 
     try {
-      const response = await fetch(
-        `${process.env.EXPO_PUBLIC_API_BASE_URL}/chat`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: textToSend }),
+      let responseText = "";
+      let isRagUsed = false;
+
+      // Try RAG first
+      try {
+        const ragRes = await fetch(
+          `${process.env.EXPO_PUBLIC_API_BASE_URL}/rag/chat`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ message: textToSend }),
+          }
+        );
+
+        if (!ragRes.ok) {
+          console.log("RAG backend error:", ragRes.status);
+          throw new Error(`HTTP ${ragRes.status}`);
         }
-      );
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const ragData = await ragRes.json();
+        const ragAnswer = ragData.response;
 
-      const data = await response.json();
-      const responseText =
-        data.response ??
-        data.answer ??
-        data.message ??
-        "Sorry, I could not generate a response.";
+        if (
+          isDocumentQuery ||
+          (ragAnswer &&
+            ragAnswer.length > 20 &&
+            !ragAnswer.toLowerCase().includes("i don't know"))
+        ) {
+          responseText = ragAnswer;
+          isRagUsed = true; //mark rag used
+        }
+      } catch {
+        console.log("RAG failed, trying fallback...");
+      }
+
+      // Fallback to normal chat
+      if (!responseText) {
+        const response = await fetch(
+          `${process.env.EXPO_PUBLIC_API_BASE_URL}/chat`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: textToSend }),
+          }
+        );
+
+        if (!response.ok) {
+          console.log("Chat backend error:", response.status);
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        responseText =
+          data.response ??
+          data.answer ??
+          data.message ??
+          "Sorry, I could not generate a response.";
+      }
 
       // Replace placeholder with real text, still streaming (word-by-word will play)
+
+      const finalText = isRagUsed
+        ? `📄 From document\n\n${responseText}`
+        : responseText;
+
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantId
-            ? { ...m, text: responseText, streaming: true }
+            ? { ...m, text: finalText, streaming: true }
             : m
         )
       );
@@ -221,7 +276,7 @@ export default function ChatScreen() {
         try {
           await addDoc(collection(db, "users", user.uid, "chats", "default", "messages"), {
             role: "assistant",
-            text: responseText,
+            text: finalText, // use the version with badge
             timestamp: Timestamp.now(),
           });
         } catch (error) {
