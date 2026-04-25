@@ -4,6 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.chat import router as chat_router
 from app.api import sensor
+from app.api.rag_chat import router as rag_router
+
 
 app = FastAPI(title="Campus-Aware Intelligent AI Agent API")
 
@@ -26,3 +28,6 @@ def health_check():
         "environment": settings.APP_ENV,
         "port": settings.APP_PORT,
     }
+
+
+app.include_router(rag_router, prefix="/rag", tags=["RAG"])
