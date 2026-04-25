@@ -152,11 +152,7 @@ export default function ChatScreen() {
 
   const handleSend = async (promptText?: string) => {
     const textToSend = promptText ?? input.trim();
-    const isDocumentQuery =
-      !!attachedFileName ||
-      textToSend.toLowerCase().includes("document") ||
-      textToSend.toLowerCase().includes("pdf") ||
-      textToSend.toLowerCase().includes("file");
+
     if (!textToSend && !attachedFileName) return;
     if (isLoading) return;
 
@@ -221,16 +217,22 @@ export default function ChatScreen() {
 
         const ragData = await ragRes.json();
         const ragAnswer = ragData.response;
+        
+        if (ragAnswer) {
+          const lower = ragAnswer.toLowerCase();
 
-        if (
-          isDocumentQuery ||
-          (ragAnswer &&
-            ragAnswer.length > 20 &&
-            !ragAnswer.toLowerCase().includes("i don't know"))
-        ) {
-          responseText = ragAnswer;
-          isRagUsed = true; //mark rag used
-        }
+          const isBadAnswer =
+            lower.includes("i don't know") ||
+            lower.includes("don't have enough information") ||
+            lower.includes("not enough information") ||
+            lower.includes("cannot answer") ||
+            lower.includes("no relevant information");
+
+          if (!isBadAnswer && ragAnswer.length > 20) {
+            responseText = ragAnswer;
+            isRagUsed = true;
+          }
+       }
       } catch {
         console.log("RAG failed, trying fallback...");
       }
