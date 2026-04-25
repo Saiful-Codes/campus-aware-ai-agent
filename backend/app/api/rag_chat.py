@@ -12,7 +12,7 @@ class ChatRequest(BaseModel):
 
 
 # response endpoint
-@router.post("/rag/chat")
+@router.post("/chat")
 def chat(request: ChatRequest):
     try:
         answer = generate_answer(request.message)
