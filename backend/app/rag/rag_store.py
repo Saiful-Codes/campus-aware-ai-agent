@@ -4,16 +4,20 @@ import os
 from rag_loader import load_pdfs
 from rag_chunker import process_documents
 from rag_embedder import generate_embeddings
+from dotenv import load_dotenv
 
+
+#  Load environment variables
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../../.env"))
 
 
 #  DB connection (UPDATE password if needed)
 conn = psycopg2.connect(
-    dbname="rag_db",
-    user="ifratbinhasanruhan",   # actual username from psql
-    password="",                 # try empty first (or put your password if set)
-    host="localhost",
-    port="5432"
+    dbname=os.getenv("DB_NAME"),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD"),  # keep empty or add if you set one
+    host=os.getenv("DB_HOST"),
+    port=os.getenv("DB_PORT")
 )
 
 

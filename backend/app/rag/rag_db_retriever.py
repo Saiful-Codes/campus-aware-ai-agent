@@ -1,6 +1,11 @@
 import psycopg2
+import os
 from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
 
+
+#  Load environment variables
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../../.env"))
 
 
 #  load embedding model
@@ -10,11 +15,11 @@ model = SentenceTransformer('all-MiniLM-L6-v2')
 
 #  DB connection
 conn = psycopg2.connect(
-    dbname="rag_db",
-    user="ifratbinhasanruhan",
-    password="",   # same as before
-    host="localhost",
-    port="5432"
+    dbname=os.getenv("DB_NAME"),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD"),  # keep empty or add if you set one
+    host=os.getenv("DB_HOST"),
+    port=os.getenv("DB_PORT") 
 )
 
 

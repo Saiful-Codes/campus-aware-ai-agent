@@ -1,25 +1,21 @@
 import os
 import psycopg2
 from sentence_transformers import SentenceTransformer
-import google.generativeai as genai
+from google import genai
 from dotenv import load_dotenv
 
 
 #  Load environment variables
-load_dotenv()
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../../.env"))
 
-
-#  Get API key securely
+# Get API keu
 api_key = os.getenv("GEMINI_API_KEY")
 
 if not api_key:
     raise ValueError("GEMINI_API_KEY not found. Check your .env file.")
 
-genai.configure(api_key=api_key)
 
-
-#  Use free Gemini model
-model = genai.GenerativeModel("gemini-2.5-flash")
+client = genai.Client(api_key=api_key)
 
 
 # 🔹 Embedding model
@@ -28,11 +24,11 @@ embed_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 #  PostgreSQL connection
 conn = psycopg2.connect(
-    dbname="rag_db",
-    user="ifratbinhasanruhan",
-    password="",  # keep empty or add if you set one
-    host="localhost",
-    port="5432"
+    dbname=os.getenv("DB_NAME"),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD"),  # keep empty or add if you set one
+    host=os.getenv("DB_HOST"),
+    port=os.getenv("DB_PORT")
 )
 
 
@@ -91,7 +87,10 @@ def generate_answer(query):
     chunks = retrieve(query)
     prompt = build_prompt(query, chunks)
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(
+    model="gemini-2.5-flash",
+    contents=prompt
+    )
 
     return response.text
 
