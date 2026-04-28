@@ -8,8 +8,10 @@ from dotenv import load_dotenv
 
 
 #  Load environment variables
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../../.env"))
-
+load_dotenv(dotenv_path=os.path.join(os.getcwd(), ".env"))
+print("DB_NAME:", os.getenv("DB_NAME"))
+print("DB_USER:", os.getenv("DB_USER"))
+print("DB_PASSWORD:", os.getenv("DB_PASSWORD"))
 
 #  DB connection (UPDATE password if needed)
 conn = psycopg2.connect(
