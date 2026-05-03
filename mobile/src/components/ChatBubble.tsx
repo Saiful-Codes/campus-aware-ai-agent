@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Animated, StyleSheet, Text, View } from "react-native";
 import { getFontSize, palette } from "../constants/theme";
 import { useAppSettings } from "../context/AppSettingsContext";
+import MarkdownRenderer from "./MarkdownRenderer";
 
 type Props = {
   role: "user" | "assistant";
@@ -10,124 +11,129 @@ type Props = {
   onStreamComplete?: () => void;
 };
 
-const WORD_INTERVAL_MS = 40;
-const DOT_UP_MS = 220;
-const DOT_DOWN_MS = 220;
-const DOT_IDLE_MS = 900; // total loop = DOT_UP + DOT_DOWN + DOT_IDLE = 1340ms
+const CHAR_INTERVAL_MS = 8;
 
-export default function ChatBubble({ role, text, streaming = false, onStreamComplete }: Props) {
+// ── Claude-style spinner ──────────────────────────────────────────────────────
+// Anthropic logo = 4 bars at 0/45/90/135° → 8-pointed starburst.
+// A clockwise opacity sweep fires through each bar one at a time:
+// bar brightens → next bar brightens → previous dims → loops.
+// This is the exact visual Claude uses for its thinking state.
+function ClaudeSpinner({ color }: { color: string }) {
+  // Start: bar 0 fully bright, others dim
+  const opacities = useRef(
+    [0, 1, 2, 3].map((i) => new Animated.Value(i === 0 ? 1 : 0.22))
+  ).current;
+
+  useEffect(() => {
+    const STEP_MS = 160; // ms each step — matches Claude's cadence
+    const n = opacities.length;
+
+    const sweep = Animated.loop(
+      Animated.sequence(
+        [0, 1, 2, 3].map((i) =>
+          Animated.parallel([
+            // Current bar fades out
+            Animated.timing(opacities[i], {
+              toValue: 0.22,
+              duration: STEP_MS,
+              useNativeDriver: true,
+            }),
+            // Next bar lights up
+            Animated.timing(opacities[(i + 1) % n], {
+              toValue: 1,
+              duration: STEP_MS,
+              useNativeDriver: true,
+            }),
+          ])
+        )
+      )
+    );
+
+    sweep.start();
+    return () => {
+      sweep.stop();
+      opacities.forEach((o, i) => o.setValue(i === 0 ? 1 : 0.22));
+    };
+  }, []);
+
+  return (
+    <View style={spinner.container}>
+      {[0, 45, 90, 135].map((deg, i) => (
+        <Animated.View
+          key={i}
+          style={[
+            spinner.bar,
+            {
+              backgroundColor: color,
+              opacity: opacities[i],
+              transform: [{ rotate: `${deg}deg` }],
+            },
+          ]}
+        />
+      ))}
+    </View>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+export default function ChatBubble({
+  role,
+  text,
+  streaming = false,
+  onStreamComplete,
+}: Props) {
   const { themeMode, largeText } = useAppSettings();
   const colors = palette[themeMode];
   const isUser = role === "user";
 
-  // "thinking" = waiting for API response (placeholder text)
   const isThinking = streaming && text === "…";
 
   const [displayedText, setDisplayedText] = useState(streaming ? "" : text);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const wordIndexRef = useRef(0);
+  const intervalRef  = useRef<ReturnType<typeof setInterval> | null>(null);
+  const charIndexRef = useRef(0);
 
-  // ── Bouncing dot animated values ──────────────────────────────────────────
-  const dot1 = useRef(new Animated.Value(0)).current;
-  const dot2 = useRef(new Animated.Value(0)).current;
-  const dot3 = useRef(new Animated.Value(0)).current;
-
+  // Character-by-character streaming
   useEffect(() => {
-    if (!isThinking) {
-      [dot1, dot2, dot3].forEach((d) => d.setValue(0));
-      return;
-    }
-
-    const makeDotAnim = (val: Animated.Value, delay: number) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(delay),
-          Animated.timing(val, { toValue: -7, duration: DOT_UP_MS, useNativeDriver: true }),
-          Animated.timing(val, { toValue: 0, duration: DOT_DOWN_MS, useNativeDriver: true }),
-          Animated.delay(DOT_IDLE_MS - delay),
-        ])
-      );
-
-    const anims = [
-      makeDotAnim(dot1, 0),
-      makeDotAnim(dot2, 180),
-      makeDotAnim(dot3, 360),
-    ];
-    anims.forEach((a) => a.start());
-
-    return () => {
-      anims.forEach((a) => a.stop());
-      [dot1, dot2, dot3].forEach((d) => d.setValue(0));
-    };
-  }, [isThinking]);
-
-  // ── Word-by-word streaming ─────────────────────────────────────────────────
-  useEffect(() => {
-    // Skip word animation while thinking or not streaming
     if (!streaming || text === "…") return;
-
     setDisplayedText("");
-    wordIndexRef.current = 0;
-    const words = text.split(" ");
-
+    charIndexRef.current = 0;
     intervalRef.current = setInterval(() => {
-      wordIndexRef.current += 1;
-      const slice = words.slice(0, wordIndexRef.current).join(" ");
-      setDisplayedText(slice);
-
-      if (wordIndexRef.current >= words.length) {
+      charIndexRef.current += 3;
+      setDisplayedText(text.slice(0, charIndexRef.current));
+      if (charIndexRef.current >= text.length) {
+        setDisplayedText(text);
         clearInterval(intervalRef.current!);
         intervalRef.current = null;
         onStreamComplete?.();
       }
-    }, WORD_INTERVAL_MS);
-
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
+    }, CHAR_INTERVAL_MS);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [text, streaming]);
 
-  // Show cursor while words are still appearing
-  const showCursor = streaming && !isThinking && displayedText !== text;
-
-  // ── Thinking state: animated dots ─────────────────────────────────────────
+  // ── Thinking state — compact pill, no avatar, just the Claude spinner ──────
   if (isThinking) {
     return (
       <View style={[styles.row, styles.assistantRow]}>
-        <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
-          <Text style={styles.avatarText}>AI</Text>
-        </View>
         <View
           style={[
-            styles.bubble,
-            { backgroundColor: colors.bubbleAssistant, borderColor: colors.border },
+            styles.thinkingPill,
+            {
+              backgroundColor: colors.bubbleAssistant,
+              borderColor:     colors.border,
+            },
           ]}
         >
-          <View style={styles.dotsContainer}>
-            {[dot1, dot2, dot3].map((dot, i) => (
-              <Animated.View
-                key={i}
-                style={[
-                  styles.dot,
-                  { backgroundColor: colors.primary },
-                  { transform: [{ translateY: dot }] },
-                ]}
-              />
-            ))}
-          </View>
+          <ClaudeSpinner color={colors.primary} />
         </View>
       </View>
     );
   }
 
-  // ── Normal bubble ─────────────────────────────────────────────────────────
+  // ── Normal bubble ──────────────────────────────────────────────────────────
+  const textToShow = streaming ? displayedText : text;
+
   return (
     <View style={[styles.row, isUser ? styles.userRow : styles.assistantRow]}>
-      {!isUser && (
-        <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
-          <Text style={styles.avatarText}>AI</Text>
-        </View>
-      )}
       <View
         style={[
           styles.bubble,
@@ -137,26 +143,45 @@ export default function ChatBubble({ role, text, streaming = false, onStreamComp
           },
         ]}
       >
-        <Text
-          style={[
-            styles.text,
-            {
-              color: isUser ? colors.white : colors.text,
-              fontSize: getFontSize(14, largeText),
-              lineHeight: getFontSize(22, largeText),
-            },
-          ]}
-        >
-          {displayedText}
-          {showCursor && (
-            <Text style={{ color: colors.primary, fontWeight: "900" }}>▍</Text>
-          )}
-        </Text>
+        {isUser ? (
+          <Text
+            style={[
+              styles.text,
+              {
+                color:      colors.white,
+                fontSize:   getFontSize(14, largeText),
+                lineHeight: getFontSize(22, largeText),
+              },
+            ]}
+          >
+            {textToShow}
+          </Text>
+        ) : (
+          <MarkdownRenderer text={textToShow} color={colors.text} />
+        )}
       </View>
     </View>
   );
 }
 
+// ── Spinner styles ────────────────────────────────────────────────────────────
+const spinner = StyleSheet.create({
+  container: {
+    width: 26,
+    height: 26,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  // Each bar covers one axis of the starburst; 4 bars × 2 ends = 8 points
+  bar: {
+    position: "absolute",
+    width: 3,
+    height: 26,
+    borderRadius: 2,
+  },
+});
+
+// ── Bubble styles ─────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   row: {
     width: "100%",
@@ -165,8 +190,18 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     gap: 8,
   },
-  userRow: { justifyContent: "flex-end" },
+  userRow:      { justifyContent: "flex-end" },
   assistantRow: { justifyContent: "flex-start" },
+
+  thinkingPill: {
+    width: 52,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
   avatar: {
     width: 28,
     height: 28,
@@ -189,16 +224,4 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   text: { fontWeight: "500" },
-  dotsContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingVertical: 4,
-    paddingHorizontal: 2,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
 });
