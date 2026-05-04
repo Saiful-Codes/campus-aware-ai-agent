@@ -45,6 +45,16 @@ Important Flux rules:
 - For lowest values, use min().
 - For counts, use count().
 - Use pivot only when returning multiple fields together.
+- For max(), min(), mean(), and count(), use group() before the aggregate so the result is a single overall value.
+- For highest temperature, generate:
+  from(bucket: "sensor_data")
+    |> range(start: -30d)
+    |> filter(fn: (r) => r["_measurement"] == "sensor_readings")
+    |> filter(fn: (r) => r["_field"] == "temperature")
+    |> group()
+    |> max()
+- For average temperature, use group() |> mean().
+- For count queries, use group() |> count().
 """
 
 
