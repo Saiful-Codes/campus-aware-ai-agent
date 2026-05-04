@@ -132,9 +132,14 @@ def run_flux_query(flux_query: str):
 
         for table in tables:
             for record in table.records:
-                results.append(record.values)
+                results.append({
+                    "time": str(record.get_time()),
+                    "field": record.values.get("_field"),
+                    "value": record.get_value(),
+                    "measurement": record.values.get("_measurement"),
+                })
 
-        return results
+        return results[:20]
 
     finally:
         client.close()
