@@ -4,7 +4,8 @@ from fastapi import APIRouter
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.services.llm_service import generate_response, generate_sensor_response
 from app.services.routing_service import is_sensor_query
-from app.services.sensor_service import get_latest_sensor_data
+from app.services.sensor_service import sync_latest_sensor_data
+from app.services.sensor_db_service import get_latest_sensor_reading_from_db
 from app.rag.rag_pipeline import generate_answer
 
 router = APIRouter()
@@ -20,7 +21,8 @@ def is_rag_query(query: str) -> bool:
         "student services", "ask latrobe", "counselling", "medical centre",
         "career ready", "accessibility", "international",
         "orientation", "student id", "usi", "enrolment", "studentonline",
-        "library", "campus", "building", "facility", "facilities","ask la trobe", "ask latrobe", "digital innovation hub",
+        "library", "campus", "building", "facility", "facilities",
+        "ask la trobe", "ask latrobe", "digital innovation hub",
         "student support", "student service", "student services",
         "medical centre", "career ready", "counselling", "accessibility", "library"
     ]
@@ -36,21 +38,38 @@ def chat(request: ChatRequest):
 
     # Sensor query branch
     if is_sensor_query(request.query):
-        print("Detected SENSOR query. Using live IoT sensor flow...")
+        print("Detected SENSOR query. Using DB-backed IoT sensor flow...")
 
-        sensor_data = get_latest_sensor_data()
-        answer, status = generate_sensor_response(request.query, sensor_data)
+        try:
+            sync_result = sync_latest_sensor_data()
+            print(f"Sensor sync result: {sync_result}")
 
-        request_end = time.time()
-        total_time = request_end - request_start
+            sensor_data = get_latest_sensor_reading_from_db()
+            answer, status = generate_sensor_response(request.query, sensor_data)
 
-        print(f"Total backend time: {total_time:.2f} seconds")
-        print("===== SENSOR REQUEST FINISHED =====\n")
+            request_end = time.time()
+            total_time = request_end - request_start
 
-        return {
-            "answer": answer,
-            "status": status,
-        }
+            print(f"Total backend time: {total_time:.2f} seconds")
+            print("===== SENSOR REQUEST FINISHED =====\n")
+
+            return {
+                "answer": answer,
+                "status": status,
+            }
+
+        except Exception as e:
+            request_end = time.time()
+            total_time = request_end - request_start
+
+            print(f"SENSOR ERROR: {e}")
+            print(f"Total backend time: {total_time:.2f} seconds")
+            print("===== SENSOR REQUEST FAILED =====\n")
+
+            return {
+                "answer": "Sorry, I could not fetch the latest sensor data right now.",
+                "status": "sensor_error",
+            }
 
     # RAG query branch
     if is_rag_query(request.query):

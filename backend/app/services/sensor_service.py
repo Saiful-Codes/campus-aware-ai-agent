@@ -1,4 +1,6 @@
+from app.services.sensor_db_service import insert_sensor_reading
 import requests
+
 
 URL = "https://api.thingspeak.com/channels/270748/feeds.json?results=2"
 
@@ -34,6 +36,39 @@ def get_latest_sensor_data():
         print("Error fetching sensor data:", e)
         return None
 
+def sync_latest_sensor_data():
+    """
+    Fetch latest sensor data from API and store it in DB (no duplicates).
+    """
+
+    raw_data = fetch_raw_sensor_data()
+    feeds = raw_data.get("feeds", [])
+
+    if not feeds:
+        return {
+            "success": False,
+            "message": "No sensor data available"
+        }
+
+    latest_feed = feeds[-1]
+
+    sensor_data = {
+        "timestamp": latest_feed.get("created_at"),
+        "temperature": float(latest_feed.get("field1")) if latest_feed.get("field1") else None,
+        "humidity": float(latest_feed.get("field2")) if latest_feed.get("field2") else None,
+        "pressure": float(latest_feed.get("field3")) if latest_feed.get("field3") else None,
+        "dew_point": float(latest_feed.get("field4")) if latest_feed.get("field4") else None,
+        "entry_id": latest_feed.get("entry_id"),
+    }
+
+    result = insert_sensor_reading(sensor_data)
+
+    return {
+        "success": True,
+        "inserted": result["inserted"],
+        "entry_id": result["entry_id"],
+        "data": sensor_data
+    }
 
 def build_sensor_response(user_message: str, sensor_data: dict) -> str:
     if not sensor_data:
