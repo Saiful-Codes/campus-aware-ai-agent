@@ -50,3 +50,6 @@ data/private/
 
 # Rag pdfs 
 backend/ragData/
+
+# raw historical sensor data
+data/sensor/raw/
