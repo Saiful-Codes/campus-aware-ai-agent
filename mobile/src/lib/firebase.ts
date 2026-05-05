@@ -3,7 +3,7 @@ import { getAuth, setPersistence, browserSessionPersistence } from "firebase/aut
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyB4pdllgZ15BONtUMNlm4SXKdauq-9wwrk",
+  apiKey: "AIzaSyClGXJOVV5Cwu-vZbs7ZWpqbeT-28MM00c",
   authDomain: "campus-ai-agent.firebaseapp.com",
   projectId: "campus-ai-agent",
   storageBucket: "campus-ai-agent.firebasestorage.app",
