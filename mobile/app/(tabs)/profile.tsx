@@ -1,347 +1,463 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import {
-  BookOpen,
-  Building2,
   ChevronRight,
+  Clock,
+  Info,
   LogOut,
   MessageSquare,
   Moon,
   Settings,
-  User,
+  Trash2,
 } from "lucide-react-native";
-import React from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   Alert,
+  Linking,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { getFontSize, palette } from "../../src/constants/theme";
 import { useAppSettings } from "../../src/context/AppSettingsContext";
+import { useAuth } from "../../src/context/AuthContext";
 
-// ── Stat card ────────────────────────────────────────────────────────────────
-function StatCard({
-  label,
-  value,
-  colors,
-  largeText,
-}: {
-  label: string;
-  value: string;
-  colors: (typeof palette)["light"];
-  largeText: boolean;
-}) {
-  return (
-    <View
-      style={[
-        statStyles.card,
-        { backgroundColor: colors.card, borderColor: colors.border },
-      ]}
-    >
-      <Text
-        style={[
-          statStyles.value,
-          { color: colors.primary, fontSize: getFontSize(22, largeText) },
-        ]}
-      >
-        {value}
-      </Text>
-      <Text
-        style={[
-          statStyles.label,
-          { color: colors.muted, fontSize: getFontSize(11, largeText) },
-        ]}
-      >
-        {label}
-      </Text>
-    </View>
-  );
+// ── Storage keys (must match chat.tsx) ───────────────────────────────────────
+const THREADS_KEY = "campus_ai_threads_v2";
+const ACTIVE_THREAD_KEY = "campus_ai_active_thread";
+
+type ChatThread = {
+  id: string;
+  name: string;
+  preview: string;
+  updatedAt: number;
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function getInitial(email: string | null | undefined, displayName: string | null | undefined, isGuest: boolean) {
+  if (isGuest) return "G";
+  if (displayName) return displayName.charAt(0).toUpperCase();
+  if (email) return email.charAt(0).toUpperCase();
+  return "U";
 }
 
-const statStyles = StyleSheet.create({
-  card: {
-    flex: 1,
-    borderRadius: 18,
-    borderWidth: 1,
-    paddingVertical: 16,
-    paddingHorizontal: 12,
-    alignItems: "center",
-    gap: 4,
-  },
-  value: { fontWeight: "900" },
-  label: { fontWeight: "600", textTransform: "uppercase", letterSpacing: 0.5, textAlign: "center" },
-});
+function getDisplayName(email: string | null | undefined, displayName: string | null | undefined, isGuest: boolean) {
+  if (isGuest) return "Guest";
+  if (displayName) return displayName;
+  if (email) return email.split("@")[0];
+  return "Campus User";
+}
 
-// ── Menu row ─────────────────────────────────────────────────────────────────
-function MenuRow({
-  icon,
-  label,
-  onPress,
-  colors,
-  largeText,
-  danger,
-}: {
+function formatDate(ts: number) {
+  const d = new Date(ts);
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+
+// ── Reusable row ──────────────────────────────────────────────────────────────
+type RowProps = {
   icon: React.ReactNode;
   label: string;
+  sublabel?: string;
   onPress: () => void;
   colors: (typeof palette)["light"];
   largeText: boolean;
   danger?: boolean;
-}) {
+  right?: React.ReactNode;
+};
+
+function Row({ icon, label, sublabel, onPress, colors, largeText, danger, right }: RowProps) {
   return (
     <Pressable
+      onPress={onPress}
       style={({ pressed }) => [
-        rowStyles.row,
+        rowS.row,
         { backgroundColor: pressed ? colors.surface2 : "transparent" },
       ]}
-      onPress={onPress}
     >
-      <View style={[rowStyles.iconWrap, { backgroundColor: danger ? "#FEE2E2" : colors.surface }]}>
+      <View style={[rowS.iconWrap, { backgroundColor: danger ? "#FEE2E2" : colors.surface }]}>
         {icon}
       </View>
-      <Text
-        style={[
-          rowStyles.label,
-          {
-            color: danger ? "#DC2626" : colors.text,
-            fontSize: getFontSize(15, largeText),
-          },
-        ]}
-      >
-        {label}
-      </Text>
-      <ChevronRight color={danger ? "#DC2626" : colors.muted} size={18} />
+      <View style={rowS.labelWrap}>
+        <Text style={[rowS.label, { color: danger ? "#DC2626" : colors.text, fontSize: getFontSize(15, largeText) }]}>
+          {label}
+        </Text>
+        {sublabel ? (
+          <Text style={[rowS.sublabel, { color: colors.muted, fontSize: getFontSize(12, largeText) }]}>
+            {sublabel}
+          </Text>
+        ) : null}
+      </View>
+      {right ?? <ChevronRight color={danger ? "#DC2626" : colors.muted} size={17} />}
     </Pressable>
   );
 }
 
-const rowStyles = StyleSheet.create({
+const rowS = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
-    paddingVertical: 13,
-    gap: 14,
+    paddingVertical: 12,
+    gap: 13,
     borderRadius: 14,
   },
   iconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
   },
-  label: { flex: 1, fontWeight: "600" },
+  labelWrap: { flex: 1 },
+  label: { fontWeight: "600" },
+  sublabel: { marginTop: 1 },
+});
+
+// ── Thread history item ───────────────────────────────────────────────────────
+function ThreadRow({
+  thread,
+  colors,
+  largeText,
+  onDelete,
+}: {
+  thread: ChatThread;
+  colors: (typeof palette)["light"];
+  largeText: boolean;
+  onDelete: () => void;
+}) {
+  return (
+    <View style={[threadS.row, { borderBottomColor: colors.border }]}>
+      <View style={[threadS.dot, { backgroundColor: colors.primarySoft }]}>
+        <MessageSquare color={colors.primary} size={13} />
+      </View>
+      <View style={threadS.info}>
+        <Text
+          style={[threadS.name, { color: colors.text, fontSize: getFontSize(14, largeText) }]}
+          numberOfLines={1}
+        >
+          {thread.name}
+        </Text>
+        <Text style={[threadS.meta, { color: colors.muted, fontSize: getFontSize(11, largeText) }]}>
+          {formatDate(thread.updatedAt)}
+          {thread.preview ? ` · ${thread.preview.slice(0, 40)}` : ""}
+        </Text>
+      </View>
+      <Pressable onPress={onDelete} hitSlop={10} style={threadS.deleteBtn}>
+        <Trash2 color={colors.muted} size={15} />
+      </Pressable>
+    </View>
+  );
+}
+
+const threadS = StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+    gap: 12,
+    borderBottomWidth: 1,
+  },
+  dot: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  info: { flex: 1, minWidth: 0 },
+  name: { fontWeight: "600", marginBottom: 2 },
+  meta: { lineHeight: 15 },
+  deleteBtn: { padding: 4, flexShrink: 0 },
 });
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 export default function ProfileScreen() {
   const { themeMode, largeText } = useAppSettings();
   const colors = palette[themeMode];
+  const { user, isGuest, logout } = useAuth();
 
-  const handleLogout = () => {
+  const [threads, setThreads] = useState<ChatThread[]>([]);
+  const [showAllThreads, setShowAllThreads] = useState(false);
+
+  const initial     = getInitial(user?.email, user?.displayName, isGuest);
+  const displayName = getDisplayName(user?.email, user?.displayName, isGuest);
+  const email       = isGuest ? "Browsing as guest" : user?.email ?? "";
+
+  // ── Load threads ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const raw = await AsyncStorage.getItem(THREADS_KEY);
+        if (raw) {
+          const parsed: ChatThread[] = JSON.parse(raw);
+          setThreads(parsed.sort((a, b) => b.updatedAt - a.updatedAt));
+        }
+      } catch {}
+    };
+    load();
+  }, []);
+
+  // ── Delete one thread ───────────────────────────────────────────────────────
+  const deleteThread = useCallback(async (id: string) => {
+    const updated = threads.filter((t) => t.id !== id);
+    setThreads(updated);
+    try {
+      await AsyncStorage.setItem(THREADS_KEY, JSON.stringify(updated));
+      // Remove messages for this thread
+      const rawMsgs = await AsyncStorage.getItem(`${THREADS_KEY}_messages`);
+      if (rawMsgs) {
+        const msgs = JSON.parse(rawMsgs);
+        delete msgs[id];
+        await AsyncStorage.setItem(`${THREADS_KEY}_messages`, JSON.stringify(msgs));
+      }
+      // If deleted thread was active, clear active pointer
+      const activeId = await AsyncStorage.getItem(ACTIVE_THREAD_KEY);
+      if (activeId === id) await AsyncStorage.removeItem(ACTIVE_THREAD_KEY);
+    } catch {}
+  }, [threads]);
+
+  // ── Clear all threads ────────────────────────────────────────────────────────
+  const clearAllThreads = () => {
+    Alert.alert(
+      "Clear chat history",
+      "This will delete all your conversations. This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear all",
+          style: "destructive",
+          onPress: async () => {
+            setThreads([]);
+            try {
+              await AsyncStorage.multiRemove([
+                THREADS_KEY,
+                `${THREADS_KEY}_messages`,
+                ACTIVE_THREAD_KEY,
+              ]);
+            } catch {}
+          },
+        },
+      ]
+    );
+  };
+
+  // ── Sign out ─────────────────────────────────────────────────────────────────
+  const handleSignOut = () => {
     Alert.alert("Sign out", "Are you sure you want to sign out?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Sign out",
         style: "destructive",
-        onPress: () => {
-          // TODO: clear auth state and navigate to login
+        onPress: async () => {
+          await logout();
           router.replace("/login");
         },
       },
     ]);
   };
 
+  const visibleThreads = showAllThreads ? threads : threads.slice(0, 4);
+
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
+    <SafeAreaView style={[s.safe, { backgroundColor: colors.background }]}>
       <ScrollView
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={s.scroll}
         showsVerticalScrollIndicator={false}
       >
         {/* ── Page title ── */}
-        <Text
-          style={[
-            styles.pageTitle,
-            { color: colors.text, fontSize: getFontSize(28, largeText) },
-          ]}
-        >
+        <Text style={[s.pageTitle, { color: colors.text, fontSize: getFontSize(28, largeText) }]}>
           Profile
         </Text>
 
-        {/* ── Avatar + name card ── */}
-        <View
-          style={[
-            styles.heroCard,
-            { backgroundColor: colors.card, borderColor: colors.border },
-          ]}
-        >
-          {/* Avatar circle */}
-          <View style={[styles.avatarRing, { borderColor: colors.primary }]}>
-            <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
-              <User color="#fff" size={32} strokeWidth={2.5} />
-            </View>
+        {/* ── User card ── */}
+        <View style={[s.userCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={[s.avatarCircle, { backgroundColor: colors.primary }]}>
+            <Text style={[s.avatarInitial, { fontSize: getFontSize(28, largeText) }]}>
+              {initial}
+            </Text>
           </View>
-
-          <Text
-            style={[
-              styles.userName,
-              { color: colors.text, fontSize: getFontSize(20, largeText) },
-            ]}
-          >
-            Campus User
-          </Text>
-
-          <View style={[styles.roleBadge, { backgroundColor: colors.primarySoft }]}>
-            <Text style={[styles.roleText, { color: colors.primary, fontSize: getFontSize(12, largeText) }]}>
-              La Trobe University
+          <View style={s.userInfo}>
+            <Text style={[s.userName, { color: colors.text, fontSize: getFontSize(18, largeText) }]}>
+              {displayName}
+            </Text>
+            <Text style={[s.userEmail, { color: colors.muted, fontSize: getFontSize(13, largeText) }]}>
+              {email}
+            </Text>
+          </View>
+          <View style={[s.badge, { backgroundColor: colors.primarySoft }]}>
+            <Text style={[s.badgeText, { color: colors.primary, fontSize: getFontSize(11, largeText) }]}>
+              La Trobe
             </Text>
           </View>
         </View>
 
-        {/* ── Stats row ── */}
-        <View style={styles.statsRow}>
-          <StatCard label="Chats" value="—" colors={colors} largeText={largeText} />
-          <StatCard label="Rooms queried" value="—" colors={colors} largeText={largeText} />
-          <StatCard label="Docs uploaded" value="—" colors={colors} largeText={largeText} />
+        {/* ── Chat history ── */}
+        <Text style={[s.sectionLabel, { color: colors.muted, fontSize: getFontSize(11, largeText) }]}>
+          CHAT HISTORY
+        </Text>
+        <View style={[s.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          {threads.length === 0 ? (
+            <View style={s.emptyHistory}>
+              <Clock color={colors.muted} size={20} />
+              <Text style={[s.emptyText, { color: colors.muted, fontSize: getFontSize(13, largeText) }]}>
+                No conversations yet
+              </Text>
+            </View>
+          ) : (
+            <>
+              {visibleThreads.map((thread, i) => (
+                <View key={thread.id}>
+                  <ThreadRow
+                    thread={thread}
+                    colors={colors}
+                    largeText={largeText}
+                    onDelete={() => deleteThread(thread.id)}
+                  />
+                </View>
+              ))}
+
+              {threads.length > 4 && (
+                <Pressable
+                  onPress={() => setShowAllThreads((p) => !p)}
+                  style={[s.showMore, { borderTopColor: colors.border }]}
+                >
+                  <Text style={[s.showMoreText, { color: colors.primary, fontSize: getFontSize(13, largeText) }]}>
+                    {showAllThreads ? "Show less" : `Show ${threads.length - 4} more`}
+                  </Text>
+                </Pressable>
+              )}
+
+              {threads.length > 0 && (
+                <Pressable
+                  onPress={clearAllThreads}
+                  style={[s.clearAll, { borderTopColor: colors.border }]}
+                >
+                  <Trash2 color="#DC2626" size={14} />
+                  <Text style={[s.clearAllText, { fontSize: getFontSize(13, largeText) }]}>
+                    Clear all history
+                  </Text>
+                </Pressable>
+              )}
+            </>
+          )}
         </View>
 
-        {/* ── Campus section ── */}
-        <Text style={[styles.sectionLabel, { color: colors.muted, fontSize: getFontSize(12, largeText) }]}>
-          CAMPUS
+        {/* ── Settings ── */}
+        <Text style={[s.sectionLabel, { color: colors.muted, fontSize: getFontSize(11, largeText) }]}>
+          SETTINGS
         </Text>
-        <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <MenuRow
-            icon={<Building2 color={colors.primary} size={18} strokeWidth={2} />}
-            label="Bundoora Campus"
-            onPress={() => {}}
-            colors={colors}
-            largeText={largeText}
-          />
-          <View style={[styles.divider, { backgroundColor: colors.border }]} />
-          <MenuRow
-            icon={<BookOpen color={colors.primary} size={18} strokeWidth={2} />}
-            label="PDF Documents"
-            onPress={() => {}}
-            colors={colors}
-            largeText={largeText}
-          />
-          <View style={[styles.divider, { backgroundColor: colors.border }]} />
-          <MenuRow
-            icon={<MessageSquare color={colors.primary} size={18} strokeWidth={2} />}
-            label="Chat History"
-            onPress={() => {}}
-            colors={colors}
-            largeText={largeText}
-          />
-        </View>
-
-        {/* ── Preferences section ── */}
-        <Text style={[styles.sectionLabel, { color: colors.muted, fontSize: getFontSize(12, largeText) }]}>
-          PREFERENCES
-        </Text>
-        <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <MenuRow
-            icon={<Settings color={colors.primary} size={18} strokeWidth={2} />}
-            label="Settings"
+        <View style={[s.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Row
+            icon={<Settings color={colors.primary} size={17} strokeWidth={2} />}
+            label="App Settings"
+            sublabel="Theme, text size, accessibility"
             onPress={() => router.push("/settings")}
             colors={colors}
             largeText={largeText}
           />
-          <View style={[styles.divider, { backgroundColor: colors.border }]} />
-          <MenuRow
-            icon={<Moon color={colors.primary} size={18} strokeWidth={2} />}
-            label={`Appearance: ${themeMode === "dark" ? "Dark" : "Light"}`}
+          <View style={[s.divider, { backgroundColor: colors.border }]} />
+          <Row
+            icon={<Moon color={colors.primary} size={17} strokeWidth={2} />}
+            label="Appearance"
+            sublabel={themeMode === "dark" ? "Dark mode" : "Light mode"}
             onPress={() => router.push("/settings")}
+            colors={colors}
+            largeText={largeText}
+          />
+          <View style={[s.divider, { backgroundColor: colors.border }]} />
+          {/* Suggested: Send Feedback */}
+          <Row
+            icon={<Info color={colors.primary} size={17} strokeWidth={2} />}
+            label="Send Feedback"
+            sublabel="Help us improve Campus AI"
+            onPress={() =>
+              Linking.openURL("mailto:feedback@campus-ai.com?subject=Campus AI Feedback")
+            }
             colors={colors}
             largeText={largeText}
           />
         </View>
 
-        {/* ── Account section ── */}
-        <Text style={[styles.sectionLabel, { color: colors.muted, fontSize: getFontSize(12, largeText) }]}>
-          ACCOUNT
-        </Text>
-        <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <MenuRow
-            icon={<LogOut color="#DC2626" size={18} strokeWidth={2} />}
-            label="Sign out"
-            onPress={handleLogout}
-            colors={colors}
-            largeText={largeText}
-            danger
-          />
-        </View>
+        {/* ── Sign out button ── */}
+        <Pressable
+          onPress={handleSignOut}
+          style={({ pressed }) => [
+            s.signOutBtn,
+            { opacity: pressed ? 0.8 : 1 },
+          ]}
+        >
+          <LogOut color="#fff" size={17} strokeWidth={2.5} />
+          <Text style={[s.signOutText, { fontSize: getFontSize(15, largeText) }]}>
+            Sign out
+          </Text>
+        </Pressable>
 
         {/* ── Footer ── */}
-        <Text style={[styles.footer, { color: colors.muted, fontSize: getFontSize(12, largeText) }]}>
-          Campus-Aware AI Agent · Cisco – La Trobe Centre for AI & IoT
+        <Text style={[s.footer, { color: colors.muted, fontSize: getFontSize(11, largeText) }]}>
+          Campus-Aware AI · Cisco – La Trobe Centre for AI & IoT{"\n"}v1.0.0
         </Text>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   safe: { flex: 1 },
   scroll: {
     paddingHorizontal: 20,
     paddingTop: 18,
-    paddingBottom: 40,
+    paddingBottom: 48,
   },
   pageTitle: {
     fontWeight: "900",
     marginBottom: 20,
   },
-  heroCard: {
-    borderRadius: 24,
-    borderWidth: 1,
-    padding: 24,
-    alignItems: "center",
-    marginBottom: 16,
-    gap: 10,
-  },
-  avatarRing: {
-    width: 80,
-    height: 80,
-    borderRadius: 28,
-    borderWidth: 3,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,
-  },
-  avatar: {
-    width: 68,
-    height: 68,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  userName: {
-    fontWeight: "800",
-  },
-  roleBadge: {
-    paddingHorizontal: 14,
-    paddingVertical: 5,
-    borderRadius: 20,
-  },
-  roleText: {
-    fontWeight: "700",
-    letterSpacing: 0.3,
-  },
-  statsRow: {
+
+  // User card
+  userCard: {
     flexDirection: "row",
-    gap: 10,
+    alignItems: "center",
+    gap: 14,
+    borderRadius: 20,
+    borderWidth: 1,
+    padding: 16,
     marginBottom: 24,
   },
+  avatarCircle: {
+    width: 54,
+    height: 54,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  avatarInitial: {
+    color: "#fff",
+    fontWeight: "900",
+  },
+  userInfo: { flex: 1, minWidth: 0 },
+  userName: { fontWeight: "800", marginBottom: 2 },
+  userEmail: { lineHeight: 17 },
+  badge: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    flexShrink: 0,
+  },
+  badgeText: { fontWeight: "700" },
+
+  // Section
   sectionLabel: {
     fontWeight: "700",
     letterSpacing: 0.8,
     marginBottom: 8,
     paddingHorizontal: 4,
+    textTransform: "uppercase",
   },
   section: {
     borderRadius: 20,
@@ -349,13 +465,49 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     overflow: "hidden",
   },
-  divider: {
-    height: 1,
-    marginHorizontal: 16,
+  divider: { height: 1, marginHorizontal: 16 },
+
+  // Chat history
+  emptyHistory: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 18,
   },
+  emptyText: {},
+  showMore: {
+    paddingVertical: 12,
+    alignItems: "center",
+    borderTopWidth: 1,
+  },
+  showMoreText: { fontWeight: "600" },
+  clearAll: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+  },
+  clearAllText: { color: "#DC2626", fontWeight: "600" },
+
+  // Sign out
+  signOutBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#DC2626",
+    borderRadius: 16,
+    paddingVertical: 15,
+    marginBottom: 24,
+  },
+  signOutText: { color: "#fff", fontWeight: "700" },
+
+  // Footer
   footer: {
     textAlign: "center",
-    lineHeight: 20,
-    marginTop: 4,
+    lineHeight: 18,
   },
 });
