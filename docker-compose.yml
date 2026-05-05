@@ -16,6 +16,7 @@ services:
   influxdb:
    image: influxdb:2.7
    container_name: campus_ai_influxdb
+   restart: always
    ports:
     - "8086:8086"
    volumes:
