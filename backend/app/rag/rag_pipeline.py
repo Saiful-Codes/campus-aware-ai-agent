@@ -1,6 +1,7 @@
 import os
 import time
 import psycopg2
+from typing import Dict, List
 from sentence_transformers import SentenceTransformer
 from google import genai
 from dotenv import load_dotenv
@@ -33,8 +34,17 @@ conn = psycopg2.connect(
 
 cursor = conn.cursor()
 
+RAG_SIMILARITY_HIGH = 0.75
+RAG_SIMILARITY_MEDIUM = 0.62
+RAG_SIMILARITY_THRESHOLD = 0.62
+
 
 def retrieve(query, top_k=3):
+    rows = retrieve_with_scores(query, top_k=top_k)
+    return [row["content"] for row in rows]
+
+
+def retrieve_with_scores(query: str, top_k: int = 5) -> List[Dict[str, float | str]]:
     print("Retrieving relevant PDF chunks from PostgreSQL...")
 
     query_embedding = embed_model.encode(query).tolist()
@@ -42,20 +52,31 @@ def retrieve(query, top_k=3):
     try:
         cursor.execute(
             """
-            SELECT content
+            SELECT content, (embedding <-> %s::vector) AS distance
             FROM documents
             ORDER BY embedding <-> %s::vector
             LIMIT %s;
             """,
-            (query_embedding, top_k),
+            (query_embedding, query_embedding, top_k),
         )
 
         results = cursor.fetchall()
-        chunks = [r[0] for r in results]
+        rows: List[Dict[str, float | str]] = []
+        for row in results:
+            content = row[0]
+            distance = float(row[1]) if row[1] is not None else 999.0
+            similarity = 1.0 / (1.0 + max(distance, 0.0))
+            rows.append(
+                {
+                    "content": content,
+                    "distance": distance,
+                    "similarity": similarity,
+                }
+            )
 
-        print(f"Retrieved {len(chunks)} relevant chunks from documents table.")
+        print(f"Retrieved {len(rows)} relevant chunks from documents table.")
 
-        return chunks
+        return rows
 
     except Exception as e:
         conn.rollback()
@@ -91,21 +112,50 @@ Answer:
     return prompt
 
 
-def generate_answer(query):
-    rag_start = time.time()
-    print("Starting RAG pipeline...")
+def _rag_confidence_label(top_similarity: float, strong_chunks: int, total_chunks: int) -> str:
+    if total_chunks == 0:
+        return "low"
 
-    chunks = retrieve(query)
+    if top_similarity >= RAG_SIMILARITY_HIGH and strong_chunks >= 1:
+        return "high"
+
+    if top_similarity >= RAG_SIMILARITY_MEDIUM and strong_chunks >= 1:
+        return "medium"
+
+    return "low"
+
+
+def generate_answer_with_diagnostics(query: str, top_k: int = 5) -> Dict[str, object]:
+    rag_start = time.time()
+    print("Starting RAG pipeline with diagnostics...")
+
+    rows = retrieve_with_scores(query, top_k=top_k)
+    chunks = [row["content"] for row in rows]
+
+    top_similarity = max([float(row["similarity"]) for row in rows], default=0.0)
+    strong_chunks = sum(
+        1
+        for row in rows
+        if float(row["similarity"]) >= RAG_SIMILARITY_THRESHOLD
+    )
+    confidence = _rag_confidence_label(top_similarity, strong_chunks, len(rows))
 
     if not chunks:
         print("No relevant document chunks found.")
-        return "I don't have enough information to answer that from the documents."
+        return {
+            "answer": "I don't have enough information to answer that from the documents.",
+            "context_chunks": [],
+            "top_similarity": 0.0,
+            "retrieved_chunk_count": 0,
+            "chunks_above_threshold": 0,
+            "confidence": "low",
+            "runtime_seconds": round(time.time() - rag_start, 3),
+        }
 
     print("Building RAG prompt with retrieved context...")
     prompt = build_prompt(query, chunks)
 
     print("Generating final RAG answer using Gemini...")
-
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=prompt,
@@ -114,10 +164,21 @@ def generate_answer(query):
     total_time = time.time() - rag_start
     print(f"RAG Gemini response completed in {total_time:.2f} seconds.")
 
-    if response.text:
-        return response.text.strip()
+    answer = response.text.strip() if response.text else "I don't have enough information to answer that."
+    return {
+        "answer": answer,
+        "context_chunks": chunks,
+        "top_similarity": round(top_similarity, 4),
+        "retrieved_chunk_count": len(rows),
+        "chunks_above_threshold": strong_chunks,
+        "confidence": confidence,
+        "runtime_seconds": round(total_time, 3),
+    }
 
-    return "I don't have enough information to answer that."
+
+def generate_answer(query):
+    result = generate_answer_with_diagnostics(query)
+    return str(result["answer"])
 
 
 if __name__ == "__main__":

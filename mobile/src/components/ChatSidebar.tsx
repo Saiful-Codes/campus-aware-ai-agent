@@ -1,11 +1,12 @@
-import { MessageSquare, Plus, Trash2, X } from "lucide-react-native";
-import React from "react";
+import { Check, MessageSquare, Pencil, Plus, Trash2, X } from "lucide-react-native";
+import React, { useState } from "react";
 import {
   Animated,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableWithoutFeedback,
   View,
 } from "react-native";
@@ -26,8 +27,11 @@ type Props = {
   onSelectThread: (id: string) => void;
   onNewThread: () => void;
   onDeleteThread: (id: string) => void;
+  onRenameThread: (id: string, name: string) => void;
   onClose: () => void;
   translateX: Animated.Value;
+  isCreatingThread?: boolean;
+  isSwitchingThread?: boolean;
 };
 
 function formatRelativeTime(ts: number): string {
@@ -50,11 +54,33 @@ export default function ChatSidebar({
   onSelectThread,
   onNewThread,
   onDeleteThread,
+  onRenameThread,
   onClose,
   translateX,
+  isCreatingThread = false,
+  isSwitchingThread = false,
 }: Props) {
   const { themeMode, largeText } = useAppSettings();
   const colors = palette[themeMode];
+  const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState("");
+
+  const startRename = (threadId: string, currentName: string) => {
+    setEditingThreadId(threadId);
+    setDraftName(currentName);
+  };
+
+  const cancelRename = () => {
+    setEditingThreadId(null);
+    setDraftName("");
+  };
+
+  const submitRename = (threadId: string) => {
+    const nextName = draftName.trim();
+    if (!nextName) return;
+    onRenameThread(threadId, nextName);
+    cancelRename();
+  };
 
   if (!visible) return null;
 
@@ -97,11 +123,12 @@ export default function ChatSidebar({
         {/* New Chat button */}
         <Pressable
           onPress={onNewThread}
+          disabled={isCreatingThread}
           style={[styles.newChatBtn, { backgroundColor: colors.primary }]}
         >
           <Plus color="#fff" size={16} />
           <Text style={[styles.newChatText, { fontSize: getFontSize(14, largeText) }]}>
-            New Chat
+            {isCreatingThread ? "Creating..." : "New Chat"}
           </Text>
         </Pressable>
 
@@ -118,10 +145,14 @@ export default function ChatSidebar({
           )}
           {threads.map((thread) => {
             const isActive = thread.id === activeThreadId;
+            const isEditing = editingThreadId === thread.id;
             return (
               <Pressable
                 key={thread.id}
-                onPress={() => onSelectThread(thread.id)}
+                onPress={() => {
+                  if (!isEditing) onSelectThread(thread.id);
+                }}
+                disabled={isSwitchingThread}
                 style={[
                   styles.threadItem,
                   isActive && { backgroundColor: colors.primarySoft },
@@ -134,24 +165,72 @@ export default function ChatSidebar({
                   style={styles.threadIcon}
                 />
                 <View style={styles.threadInfo}>
-                  <Text
-                    style={[
-                      styles.threadName,
-                      { color: isActive ? colors.primary : colors.text, fontSize: getFontSize(13, largeText) },
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {thread.name}
-                  </Text>
-                  <Text
-                    style={[styles.threadPreview, { color: colors.muted, fontSize: getFontSize(11, largeText) }]}
-                    numberOfLines={1}
-                  >
-                    {formatRelativeTime(thread.updatedAt)} · {thread.preview || "No messages yet"}
-                  </Text>
+                  {isEditing ? (
+                    <TextInput
+                      value={draftName}
+                      onChangeText={setDraftName}
+                      autoFocus
+                      maxLength={60}
+                      style={[
+                        styles.renameInput,
+                        { color: colors.text, borderColor: colors.border, fontSize: getFontSize(12, largeText) },
+                      ]}
+                      placeholder="Thread name"
+                      placeholderTextColor={colors.muted}
+                      onSubmitEditing={() => submitRename(thread.id)}
+                    />
+                  ) : (
+                    <>
+                      <Text
+                        style={[
+                          styles.threadName,
+                          { color: isActive ? colors.primary : colors.text, fontSize: getFontSize(13, largeText) },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {thread.name}
+                      </Text>
+                      <Text
+                        style={[styles.threadPreview, { color: colors.muted, fontSize: getFontSize(11, largeText) }]}
+                        numberOfLines={1}
+                      >
+                        {formatRelativeTime(thread.updatedAt)} · {thread.preview || "No messages yet"}
+                      </Text>
+                    </>
+                  )}
                 </View>
+                {isEditing ? (
+                  <>
+                    <Pressable
+                      onPress={() => submitRename(thread.id)}
+                      disabled={!draftName.trim() || isSwitchingThread}
+                      hitSlop={8}
+                      style={styles.actionBtn}
+                    >
+                      <Check color={colors.primary} size={14} />
+                    </Pressable>
+                    <Pressable
+                      onPress={cancelRename}
+                      disabled={isSwitchingThread}
+                      hitSlop={8}
+                      style={styles.actionBtn}
+                    >
+                      <X color={colors.muted} size={14} />
+                    </Pressable>
+                  </>
+                ) : (
+                  <Pressable
+                    onPress={() => startRename(thread.id, thread.name)}
+                    disabled={isSwitchingThread}
+                    hitSlop={8}
+                    style={styles.actionBtn}
+                  >
+                    <Pencil color={colors.muted} size={14} />
+                  </Pressable>
+                )}
                 <Pressable
                   onPress={() => onDeleteThread(thread.id)}
+                  disabled={isSwitchingThread}
                   hitSlop={8}
                   style={styles.deleteBtn}
                 >
@@ -218,5 +297,12 @@ const styles = StyleSheet.create({
   threadInfo: { flex: 1, minWidth: 0 },
   threadName: { fontWeight: "600", marginBottom: 2 },
   threadPreview: { lineHeight: 15 },
+  renameInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  actionBtn: { padding: 4, flexShrink: 0 },
   deleteBtn: { padding: 4, flexShrink: 0 },
 });
