@@ -40,6 +40,20 @@ type Message = {
   isError?: boolean;
 };
 
+type PickedDocument = {
+  name: string;
+  uri: string;
+  mimeType?: string;
+};
+
+type ThreadAttachment = {
+  id: string;
+  fileName: string;
+  mimeType?: string;
+  createdAt: number;
+  chunkCount: number;
+};
+
 // ── Storage keys ─────────────────────────────────────────────────────────────
 
 const THREADS_KEY = "campus_ai_threads_v2";
@@ -81,7 +95,9 @@ export default function ChatScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isCreatingThread, setIsCreatingThread] = useState(false);
   const [isSwitchingThread, setIsSwitchingThread] = useState(false);
-  const [attachedFileName, setAttachedFileName] = useState<string | null>(null);
+  const [attachedFile, setAttachedFile] = useState<PickedDocument | null>(null);
+  const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
+  const [threadAttachments, setThreadAttachments] = useState<Record<string, ThreadAttachment[]>>({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [retryMessage, setRetryMessage] = useState<string | null>(null);
 
@@ -91,8 +107,12 @@ export default function ChatScreen() {
   const activeMessages: Message[] = threadMessages[activeThreadId] ?? [];
 
   const canSend = useMemo(
-    () => (input.trim().length > 0 || !!attachedFileName) && !isLoading && !isSwitchingThread,
-    [input, attachedFileName, isLoading, isSwitchingThread]
+    () =>
+      (input.trim().length > 0 || !!attachedFile) &&
+      !isLoading &&
+      !isSwitchingThread &&
+      !isUploadingAttachment,
+    [input, attachedFile, isLoading, isSwitchingThread, isUploadingAttachment]
   );
 
   // ── Load threads ──────────────────────────────────────────────────────────
@@ -209,7 +229,7 @@ export default function ChatScreen() {
   // Reset when auth changes
   useEffect(() => {
     setInput("");
-    setAttachedFileName(null);
+    setAttachedFile(null);
     setIsLoading(false);
   }, [user, isGuest]);
 
@@ -295,7 +315,7 @@ export default function ChatScreen() {
       setIsSwitchingThread(true);
       setActiveThreadId(id);
       setInput("");
-      setAttachedFileName(null);
+      setAttachedFile(null);
       setRetryMessage(null);
 
       if (isAuthenticatedUser) {
@@ -421,13 +441,42 @@ export default function ChatScreen() {
     []
   );
 
+  const fetchThreadAttachments = useCallback(
+    async (threadId: string) => {
+      if (!isAuthenticatedUser || !user?.uid || !threadId) return;
+
+      try {
+        const response = await fetch(
+          `${process.env.EXPO_PUBLIC_API_BASE_URL}/thread-documents/${user.uid}/${threadId}`
+        );
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const data = await response.json();
+        const docs = Array.isArray(data.documents) ? (data.documents as ThreadAttachment[]) : [];
+
+        setThreadAttachments((prev) => ({
+          ...prev,
+          [threadId]: docs,
+        }));
+      } catch (error) {
+        console.log("Failed to fetch thread documents", error);
+      }
+    },
+    [isAuthenticatedUser, user?.uid]
+  );
+
+  useEffect(() => {
+    if (!activeThreadId || !isAuthenticatedUser || !user?.uid) return;
+    fetchThreadAttachments(activeThreadId);
+  }, [activeThreadId, isAuthenticatedUser, user?.uid, fetchThreadAttachments]);
+
   // ── Send ──────────────────────────────────────────────────────────────────
 
   const handleSend = async (overrideText?: string) => {
     if (isSwitchingThread) return;
 
     const textToSend = overrideText ?? input.trim();
-    if (!textToSend && !attachedFileName) return;
+    if (!textToSend && !attachedFile) return;
     if (isLoading) return;
 
     let targetThreadId = activeThreadId;
@@ -442,7 +491,7 @@ export default function ChatScreen() {
     const userMessage: Message = {
       id: `${Date.now()}-user`,
       role: "user",
-      text: textToSend || `Uploaded document: ${attachedFileName}`,
+      text: textToSend || `Uploaded document: ${attachedFile?.name}`,
     };
 
     // Auto-name the thread from first message
@@ -492,7 +541,11 @@ export default function ChatScreen() {
         const ragRes = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/rag/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: textToSend }),
+          body: JSON.stringify({
+            message: textToSend,
+            user_id: isAuthenticatedUser ? user?.uid : undefined,
+            chat_id: isAuthenticatedUser ? targetThreadId : undefined,
+          }),
         });
 
         if (!ragRes.ok) throw new Error(`HTTP ${ragRes.status}`);
@@ -524,7 +577,11 @@ export default function ChatScreen() {
         const response = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: textToSend }),
+          body: JSON.stringify({
+            query: textToSend,
+            user_id: isAuthenticatedUser ? user?.uid : undefined,
+            chat_id: isAuthenticatedUser ? targetThreadId : undefined,
+          }),
         });
 
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -595,7 +652,7 @@ export default function ChatScreen() {
       );
       setRetryMessage(textToSend);
     } finally {
-      setAttachedFileName(null);
+      setAttachedFile(null);
       setIsLoading(false);
     }
   };
@@ -627,11 +684,60 @@ export default function ChatScreen() {
         multiple: false,
         copyToCacheDirectory: true,
       });
-      if (!result.canceled && result.assets?.length > 0) {
-        setAttachedFileName(result.assets[0].name);
+
+      if (result.canceled || !result.assets?.length) return;
+
+      const picked = result.assets[0];
+      const nextPicked: PickedDocument = {
+        name: picked.name,
+        uri: picked.uri,
+        mimeType: picked.mimeType ?? "application/pdf",
+      };
+
+      setAttachedFile(nextPicked);
+
+      if (!isAuthenticatedUser || !user?.uid) {
+        Alert.alert("Sign in required", "Please sign in to store documents per chat thread.");
+        return;
       }
+
+      let targetThreadId = activeThreadId;
+      if (!targetThreadId) {
+        const createdId = await createThread();
+        if (!createdId) return;
+        targetThreadId = createdId;
+      }
+
+      setIsUploadingAttachment(true);
+
+      const form = new FormData();
+      form.append("user_id", user.uid);
+      form.append("chat_id", targetThreadId);
+      form.append("file", {
+        uri: nextPicked.uri,
+        name: nextPicked.name,
+        type: nextPicked.mimeType ?? "application/pdf",
+      } as unknown as Blob);
+
+      const uploadResponse = await fetch(
+        `${process.env.EXPO_PUBLIC_API_BASE_URL}/thread-documents/upload`,
+        {
+          method: "POST",
+          body: form,
+        }
+      );
+
+      if (!uploadResponse.ok) {
+        throw new Error(`HTTP ${uploadResponse.status}`);
+      }
+
+      await fetchThreadAttachments(targetThreadId);
+      Alert.alert("Document added", `${nextPicked.name} is now linked to this chat thread.`);
     } catch (e) {
       console.log("Document picker error", e);
+      Alert.alert("Upload failed", "Could not attach this document to the chat thread.");
+    } finally {
+      setIsUploadingAttachment(false);
     }
   };
 
@@ -669,6 +775,44 @@ export default function ChatScreen() {
             <Text style={[styles.switchingText, { color: colors.muted, fontSize: getFontSize(12, largeText) }]}>
               Loading chat...
             </Text>
+          )}
+
+          {(threadAttachments[activeThreadId] ?? []).length > 0 && (
+            <View style={styles.documentsList}>
+              <Text
+                style={[
+                  styles.documentsTitle,
+                  { color: colors.muted, fontSize: getFontSize(12, largeText) },
+                ]}
+              >
+                Thread documents
+              </Text>
+              <FlatList
+                horizontal
+                data={threadAttachments[activeThreadId] ?? []}
+                keyExtractor={(item) => item.id}
+                renderItem={({ item }) => (
+                  <View
+                    style={[
+                      styles.documentChip,
+                      { borderColor: colors.border, backgroundColor: colors.surface },
+                    ]}
+                  >
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.documentChipText,
+                        { color: colors.text, fontSize: getFontSize(12, largeText) },
+                      ]}
+                    >
+                      {item.fileName}
+                    </Text>
+                  </View>
+                )}
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.documentsScroll}
+              />
+            </View>
           )}
 
           {/* ── Empty state ── */}
@@ -715,15 +859,15 @@ export default function ChatScreen() {
           )}
 
           {/* ── Attachment chip ── */}
-          {attachedFileName && (
+          {attachedFile && (
             <View style={[styles.attachmentChip, { backgroundColor: colors.primarySoft, borderColor: colors.border }]}>
               <Text
                 style={[styles.attachmentText, { color: colors.text, fontSize: getFontSize(13, largeText) }]}
                 numberOfLines={1}
               >
-                {attachedFileName}
+                {attachedFile.name}
               </Text>
-              <Pressable onPress={() => setAttachedFileName(null)} hitSlop={8}>
+              <Pressable onPress={() => setAttachedFile(null)} hitSlop={8}>
                 <X color={colors.text} size={16} />
               </Pressable>
             </View>
@@ -733,6 +877,7 @@ export default function ChatScreen() {
           <View style={[styles.inputContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Pressable
               onPress={handlePickDocument}
+              disabled={isUploadingAttachment}
               style={[styles.iconButton, { backgroundColor: colors.surface2, borderColor: colors.border }]}
             >
               <Plus color={colors.text} size={18} />
@@ -839,6 +984,28 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     paddingHorizontal: 4,
     fontWeight: "500",
+  },
+  documentsList: {
+    marginBottom: 8,
+  },
+  documentsTitle: {
+    fontWeight: "600",
+    marginBottom: 6,
+    paddingHorizontal: 2,
+  },
+  documentsScroll: {
+    gap: 8,
+    paddingRight: 8,
+  },
+  documentChip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    maxWidth: 200,
+  },
+  documentChipText: {
+    fontWeight: "600",
   },
   chatList: {
     paddingTop: 8,

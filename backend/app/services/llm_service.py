@@ -147,3 +147,68 @@ User question:
             total_llm_time = time.time() - llm_workflow_start
             print(f"Total sensor LLM workflow time: {total_llm_time:.2f} seconds")
             return "Sorry, the AI service is busy right now. Please try again in a moment.", "error"
+
+
+def generate_hybrid_response(query: str, context_chunks: list[str]) -> Tuple[str, str]:
+    llm_workflow_start = time.time()
+    max_retries = 2
+    attempt = 0
+
+    context = "\n\n".join(context_chunks[:4]) if context_chunks else ""
+
+    prompt = f"""
+You are Campus AI, a helpful campus assistant.
+
+You may use the document snippets below if relevant.
+If the snippets are limited or incomplete, briefly mention that and continue with safe general knowledge.
+Do not invent exact links, fees, or current policy values unless they are explicitly present in the snippets.
+
+Document snippets:
+{context if context else "(No relevant snippets found)"}
+
+User question:
+{query}
+"""
+
+    while attempt <= max_retries:
+        attempt_start = time.time()
+
+        try:
+            print(f"Using model for hybrid response: {MODEL_NAME}")
+            print(f"Starting Gemini hybrid call... Attempt {attempt + 1}")
+
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt,
+            )
+
+            attempt_end = time.time()
+            attempt_time = attempt_end - attempt_start
+            print(f"Hybrid attempt {attempt + 1} succeeded in {attempt_time:.2f} seconds")
+
+            total_llm_time = time.time() - llm_workflow_start
+            print(f"Total hybrid LLM workflow time: {total_llm_time:.2f} seconds")
+
+            if response.text:
+                return response.text.strip(), "hybrid_response"
+
+            return "Sorry, I could not generate a hybrid response.", "error"
+
+        except Exception as e:
+            attempt_end = time.time()
+            attempt_time = attempt_end - attempt_start
+            print(f"Hybrid attempt {attempt + 1} failed after {attempt_time:.2f} seconds")
+            print(f"Error in generate_hybrid_response: {e}")
+
+            error_text = str(e)
+
+            if "503" in error_text and attempt < max_retries:
+                wait_time = 2 * (attempt + 1)
+                print(f"503 error detected in hybrid response. Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+                attempt += 1
+                continue
+
+            total_llm_time = time.time() - llm_workflow_start
+            print(f"Total hybrid LLM workflow time: {total_llm_time:.2f} seconds")
+            return "Sorry, the AI service is busy right now. Please try again in a moment.", "error"
