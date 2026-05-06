@@ -25,7 +25,6 @@ import { getFontSize, palette } from "../../src/constants/theme";
 import { useAppSettings } from "../../src/context/AppSettingsContext";
 import { useAuth } from "../../src/context/AuthContext";
 import {
-  clearAllChatThreads,
   createChatThread,
   deleteChatThread,
   subscribeChatThreads,
@@ -322,38 +321,6 @@ export default function ProfileScreen() {
     } catch { }
   }, [isAuthenticatedUser, user?.uid, threads]);
 
-  // ── Clear all threads ────────────────────────────────────────────────────────
-  const clearAllThreads = () => {
-    Alert.alert(
-      "Clear chat history",
-      "This will delete all your conversations. This cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Clear all",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              if (isAuthenticatedUser && user?.uid) {
-                await clearAllChatThreads(user.uid);
-              } else {
-                await AsyncStorage.multiRemove([
-                  THREADS_KEY,
-                  `${THREADS_KEY}_messages`,
-                  ACTIVE_THREAD_KEY,
-                ]);
-              }
-              setThreads([]);
-            } catch (error) {
-              console.log("Clear all chat history failed", error);
-              Alert.alert("Could not clear chat history", "Please try again.");
-            }
-          },
-        },
-      ]
-    );
-  };
-
   const openThread = useCallback((chatId: string) => {
     router.push({ pathname: "/chat", params: { chatId } });
   }, []);
@@ -440,17 +407,6 @@ export default function ProfileScreen() {
                 </Pressable>
               )}
 
-              {threads.length > 0 && (
-                <Pressable
-                  onPress={clearAllThreads}
-                  style={[s.clearAll, { borderTopColor: colors.border }]}
-                >
-                  <Trash2 color="#DC2626" size={14} />
-                  <Text style={[s.clearAllText, { fontSize: getFontSize(13, largeText) }]}>
-                    Clear all history
-                  </Text>
-                </Pressable>
-              )}
             </>
           )}
         </View>
@@ -590,15 +546,6 @@ const s = StyleSheet.create({
     borderTopWidth: 1,
   },
   showMoreText: { fontWeight: "600" },
-  clearAll: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 12,
-    borderTopWidth: 1,
-  },
-  clearAllText: { color: "#DC2626", fontWeight: "600" },
 
   // Footer
   footer: {

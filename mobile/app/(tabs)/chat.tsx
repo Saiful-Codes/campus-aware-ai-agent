@@ -353,6 +353,37 @@ export default function ChatScreen() {
     [threads, threadMessages, activeThreadId, isAuthenticatedUser, user?.uid, persist, persistActiveId]
   );
 
+  const renameThread = useCallback(
+    async (id: string, name: string) => {
+      const nextName = name.trim();
+      if (!nextName) return;
+
+      if (isAuthenticatedUser && user?.uid) {
+        try {
+          await updateChatMetadata(user.uid, id, { title: nextName });
+        } catch (error) {
+          console.log("Rename thread failed", error);
+          Alert.alert("Could not rename chat", "Please try again.");
+        }
+        return;
+      }
+
+      const updatedThreads = threads.map((t) =>
+        t.id === id
+          ? {
+            ...t,
+            name: nextName,
+            updatedAt: Date.now(),
+          }
+          : t
+      );
+
+      setThreads(updatedThreads);
+      persist(updatedThreads, threadMessages);
+    },
+    [isAuthenticatedUser, user?.uid, threads, threadMessages, persist]
+  );
+
   // ── Sidebar animation ─────────────────────────────────────────────────────
 
   const openSidebar = () => {
@@ -417,6 +448,8 @@ export default function ChatScreen() {
     // Auto-name the thread from first message
     const currentMessages = threadMessages[targetThreadId] ?? [];
     const isFirstMessage = currentMessages.filter((m) => m.role === "user").length === 0;
+    const currentThread = threads.find((t) => t.id === targetThreadId);
+    const shouldAutoTitle = isFirstMessage && (currentThread?.name ?? "New Chat") === "New Chat";
 
     updateMessages(targetThreadId, (prev) => [...prev, userMessage]);
     setInput("");
@@ -431,7 +464,7 @@ export default function ChatScreen() {
     ]);
     scrollToBottom();
 
-    const normalizedTitle = isFirstMessage ? threadName(textToSend) : undefined;
+    const normalizedTitle = shouldAutoTitle ? threadName(textToSend) : undefined;
 
     if (isAuthenticatedUser && user?.uid) {
       try {
@@ -736,6 +769,7 @@ export default function ChatScreen() {
             createThread();
           }}
           onDeleteThread={deleteThread}
+          onRenameThread={renameThread}
           onClose={closeSidebar}
           translateX={sidebarAnim}
           isCreatingThread={isCreatingThread}
