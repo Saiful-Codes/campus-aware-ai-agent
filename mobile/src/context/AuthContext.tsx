@@ -1,20 +1,29 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import {
+  deleteUser,
   User,
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
 } from "firebase/auth";
-import { auth } from "../lib/firebase";
+import { doc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
+import { auth, db } from "../lib/firebase";
 
+export type SignupExtraUserData = {
+  fullName: string;
+  role: "student" | "staff";
+  campus?: string;
+  course?: string;
+  yearOfStudy?: string;
+};
 
 type AuthContextType = {
   user: User | null;
   loading: boolean;
   isGuest: boolean;
   login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string) => Promise<void>;
+  signup: (email: string, password: string, extraUserData: SignupExtraUserData) => Promise<void>;
   logout: () => Promise<void>;
   continueAsGuest: () => void;
 };
@@ -43,17 +52,61 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       email.trim(),
       password
     );
+
+    try {
+      await updateDoc(doc(db, "users", userCredential.user.uid), {
+        lastLoginAt: serverTimestamp(),
+      });
+    } catch (e) {
+      console.log("[AuthContext] Could not update lastLoginAt", e);
+    }
+
     setUser(userCredential.user);
     setIsGuest(false);
     setLoading(false);
   };
 
-  const signup = async (email: string, password: string) => {
+  const signup = async (email: string, password: string, extraUserData: SignupExtraUserData) => {
+    const normalizedEmail = email.trim();
+    const normalizedName = extraUserData.fullName.trim();
+
+    if (!normalizedName) {
+      throw new Error("Full name is required.");
+    }
+
     const userCredential = await createUserWithEmailAndPassword(
       auth,
-      email.trim(),
+      normalizedEmail,
       password
     );
+
+    try {
+      await setDoc(doc(db, "users", userCredential.user.uid), {
+        fullName: normalizedName,
+        email: normalizedEmail,
+        role: extraUserData.role,
+        campus: extraUserData.campus?.trim() ?? "",
+        course: extraUserData.course?.trim() ?? "",
+        yearOfStudy: extraUserData.yearOfStudy?.trim() ?? "",
+        createdAt: serverTimestamp(),
+        lastLoginAt: serverTimestamp(),
+        preferences: {
+          theme: "light",
+          largeText: false,
+        },
+        usage: {
+          totalChats: 0,
+        },
+      });
+    } catch (e) {
+      try {
+        await deleteUser(userCredential.user);
+      } catch (deleteError) {
+        console.log("[AuthContext] rollback deleteUser failed", deleteError);
+      }
+      throw new Error("Account created but profile setup failed. Please try signing up again.");
+    }
+
     setUser(userCredential.user);
     setIsGuest(false);
     setLoading(false);

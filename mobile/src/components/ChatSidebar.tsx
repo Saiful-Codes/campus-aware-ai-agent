@@ -28,6 +28,8 @@ type Props = {
   onDeleteThread: (id: string) => void;
   onClose: () => void;
   translateX: Animated.Value;
+  isCreatingThread?: boolean;
+  isSwitchingThread?: boolean;
 };
 
 function formatRelativeTime(ts: number): string {
@@ -52,6 +54,8 @@ export default function ChatSidebar({
   onDeleteThread,
   onClose,
   translateX,
+  isCreatingThread = false,
+  isSwitchingThread = false,
 }: Props) {
   const { themeMode, largeText } = useAppSettings();
   const colors = palette[themeMode];
@@ -97,11 +101,12 @@ export default function ChatSidebar({
         {/* New Chat button */}
         <Pressable
           onPress={onNewThread}
+          disabled={isCreatingThread}
           style={[styles.newChatBtn, { backgroundColor: colors.primary }]}
         >
           <Plus color="#fff" size={16} />
           <Text style={[styles.newChatText, { fontSize: getFontSize(14, largeText) }]}>
-            New Chat
+            {isCreatingThread ? "Creating..." : "New Chat"}
           </Text>
         </Pressable>
 
@@ -122,6 +127,7 @@ export default function ChatSidebar({
               <Pressable
                 key={thread.id}
                 onPress={() => onSelectThread(thread.id)}
+                disabled={isSwitchingThread}
                 style={[
                   styles.threadItem,
                   isActive && { backgroundColor: colors.primarySoft },
@@ -152,6 +158,7 @@ export default function ChatSidebar({
                 </View>
                 <Pressable
                   onPress={() => onDeleteThread(thread.id)}
+                  disabled={isSwitchingThread}
                   hitSlop={8}
                   style={styles.deleteBtn}
                 >

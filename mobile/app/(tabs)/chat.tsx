@@ -1,8 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as DocumentPicker from "expo-document-picker";
+import { router, useLocalSearchParams } from "expo-router";
 import { Menu, Plus, RefreshCw, Send, X } from "lucide-react-native";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Animated,
   FlatList,
   KeyboardAvoidingView,
@@ -19,6 +21,14 @@ import ChatSidebar, { ChatThread } from "../../src/components/ChatSidebar";
 import { getFontSize, palette } from "../../src/constants/theme";
 import { useAppSettings } from "../../src/context/AppSettingsContext";
 import { useAuth } from "../../src/context/AuthContext";
+import {
+  appendChatMessage,
+  createChatThread,
+  deleteChatThread,
+  subscribeChatMessages,
+  subscribeChatThreads,
+  updateChatMetadata,
+} from "../../src/lib/chatThreads";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -55,9 +65,11 @@ function threadPreview(messages: Message[]): string {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ChatScreen() {
+  const params = useLocalSearchParams<{ chatId?: string }>();
   const { themeMode, largeText } = useAppSettings();
   const colors = palette[themeMode];
   const { user, isGuest } = useAuth();
+  const isAuthenticatedUser = !!user?.uid && !isGuest;
 
   // ── Thread state
   const [threads, setThreads] = useState<ChatThread[]>([]);
@@ -67,6 +79,8 @@ export default function ChatScreen() {
   // ── UI state
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isCreatingThread, setIsCreatingThread] = useState(false);
+  const [isSwitchingThread, setIsSwitchingThread] = useState(false);
   const [attachedFileName, setAttachedFileName] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [retryMessage, setRetryMessage] = useState<string | null>(null);
@@ -77,13 +91,33 @@ export default function ChatScreen() {
   const activeMessages: Message[] = threadMessages[activeThreadId] ?? [];
 
   const canSend = useMemo(
-    () => (input.trim().length > 0 || !!attachedFileName) && !isLoading,
-    [input, attachedFileName, isLoading]
+    () => (input.trim().length > 0 || !!attachedFileName) && !isLoading && !isSwitchingThread,
+    [input, attachedFileName, isLoading, isSwitchingThread]
   );
 
-  // ── Load persisted threads ────────────────────────────────────────────────
+  // ── Load threads ──────────────────────────────────────────────────────────
 
   useEffect(() => {
+    if (isAuthenticatedUser && user?.uid) {
+      const unsubscribe = subscribeChatThreads(
+        user.uid,
+        (remoteThreads) => {
+          const mapped: ChatThread[] = remoteThreads.map((t) => ({
+            id: t.id,
+            name: t.title,
+            preview: t.lastMessage,
+            updatedAt: t.updatedAtMs,
+          }));
+          setThreads(mapped);
+        },
+        (error) => {
+          console.log("Failed to subscribe threads", error);
+        }
+      );
+
+      return unsubscribe;
+    }
+
     const load = async () => {
       try {
         const [rawThreads, rawMessages, rawActive] = await Promise.all([
@@ -116,7 +150,61 @@ export default function ChatScreen() {
       }
     };
     load();
-  }, []);
+  }, [isAuthenticatedUser, user?.uid]);
+
+  // Keep route param chatId in sync with active thread.
+  useEffect(() => {
+    if (!threads.length) {
+      setActiveThreadId("");
+      return;
+    }
+
+    const routeChatId = params.chatId;
+
+    if (routeChatId && threads.some((t) => t.id === routeChatId)) {
+      if (activeThreadId !== routeChatId) {
+        setActiveThreadId(routeChatId);
+      }
+      return;
+    }
+
+    if (!activeThreadId || !threads.some((t) => t.id === activeThreadId)) {
+      const fallbackId = threads[0].id;
+      setActiveThreadId(fallbackId);
+      if (isAuthenticatedUser) {
+        router.replace({ pathname: "/chat", params: { chatId: fallbackId } });
+      }
+    }
+  }, [threads, params.chatId, activeThreadId, isAuthenticatedUser]);
+
+  // Load active thread messages from Firestore for authenticated users.
+  useEffect(() => {
+    if (!isAuthenticatedUser || !user?.uid || !activeThreadId) return;
+
+    setIsSwitchingThread(true);
+    const unsubscribe = subscribeChatMessages(
+      user.uid,
+      activeThreadId,
+      (rows) => {
+        const mapped: Message[] = rows.map((m) => ({
+          id: m.id,
+          role: m.role,
+          text: m.content,
+          streaming: false,
+          isError: false,
+        }));
+
+        setThreadMessages((prev) => ({ ...prev, [activeThreadId]: mapped }));
+        setIsSwitchingThread(false);
+      },
+      (error) => {
+        console.log("Failed to subscribe messages", error);
+        setIsSwitchingThread(false);
+      }
+    );
+
+    return unsubscribe;
+  }, [isAuthenticatedUser, user?.uid, activeThreadId]);
 
   // Reset when auth changes
   useEffect(() => {
@@ -129,6 +217,7 @@ export default function ChatScreen() {
 
   const persist = useCallback(
     async (updatedThreads: ChatThread[], updatedMessages: Record<string, Message[]>) => {
+      if (isAuthenticatedUser) return;
       try {
         await Promise.all([
           AsyncStorage.setItem(THREADS_KEY, JSON.stringify(updatedThreads)),
@@ -138,18 +227,41 @@ export default function ChatScreen() {
         console.log("Failed to persist threads", e);
       }
     },
-    []
+    [isAuthenticatedUser]
   );
 
   const persistActiveId = useCallback(async (id: string) => {
+    if (isAuthenticatedUser) return;
     try {
       await AsyncStorage.setItem(ACTIVE_THREAD_KEY, id);
-    } catch {}
-  }, []);
+    } catch { }
+  }, [isAuthenticatedUser]);
 
   // ── Thread operations ─────────────────────────────────────────────────────
 
-  const createThread = useCallback(() => {
+  const createThread = useCallback(async (): Promise<string | null> => {
+    if (isCreatingThread) return null;
+
+    setIsCreatingThread(true);
+
+    if (isAuthenticatedUser && user?.uid) {
+      try {
+        const id = await createChatThread(user.uid);
+        setThreadMessages((prev) => ({ ...prev, [id]: [] }));
+        setActiveThreadId(id);
+        setSidebarOpen(false);
+        closeSidebar();
+        router.replace({ pathname: "/chat", params: { chatId: id } });
+        return id;
+      } catch (error) {
+        console.log("Failed to create chat", error);
+        Alert.alert("Could not create chat", "Please try again.");
+        return null;
+      } finally {
+        setIsCreatingThread(false);
+      }
+    }
+
     const id = generateId();
     const newThread: ChatThread = { id, name: "New Chat", preview: "", updatedAt: Date.now() };
     const updatedThreads = [newThread, ...threads];
@@ -161,19 +273,64 @@ export default function ChatScreen() {
     closeSidebar();
     persist(updatedThreads, updatedMessages);
     persistActiveId(id);
-  }, [threads, threadMessages]);
+    setIsCreatingThread(false);
+    return id;
+  }, [
+    isCreatingThread,
+    isAuthenticatedUser,
+    user?.uid,
+    threads,
+    threadMessages,
+    persist,
+    persistActiveId,
+  ]);
 
   const selectThread = useCallback(
     (id: string) => {
+      if (id === activeThreadId) {
+        closeSidebar();
+        return;
+      }
+
+      setIsSwitchingThread(true);
       setActiveThreadId(id);
+      setInput("");
+      setAttachedFileName(null);
+      setRetryMessage(null);
+
+      if (isAuthenticatedUser) {
+        router.replace({ pathname: "/chat", params: { chatId: id } });
+      } else {
+        setIsSwitchingThread(false);
+      }
+
       closeSidebar();
       persistActiveId(id);
     },
-    [threads]
+    [activeThreadId, isAuthenticatedUser, persistActiveId]
   );
 
   const deleteThread = useCallback(
-    (id: string) => {
+    async (id: string) => {
+      if (isAuthenticatedUser && user?.uid) {
+        try {
+          await deleteChatThread(user.uid, id);
+
+          const remaining = threads.filter((t) => t.id !== id);
+          if (id === activeThreadId) {
+            const nextId = remaining[0]?.id ?? "";
+            setActiveThreadId(nextId);
+            if (nextId) {
+              router.replace({ pathname: "/chat", params: { chatId: nextId } });
+            }
+          }
+        } catch (error) {
+          console.log("Delete thread failed", error);
+          Alert.alert("Could not delete chat", "Please try again.");
+        }
+        return;
+      }
+
       const updatedThreads = threads.filter((t) => t.id !== id);
       const updatedMessages = { ...threadMessages };
       delete updatedMessages[id];
@@ -193,7 +350,7 @@ export default function ChatScreen() {
       setThreadMessages(updatedMessages);
       persist(updatedThreads, updatedMessages);
     },
-    [threads, threadMessages, activeThreadId]
+    [threads, threadMessages, activeThreadId, isAuthenticatedUser, user?.uid, persist, persistActiveId]
   );
 
   // ── Sidebar animation ─────────────────────────────────────────────────────
@@ -236,9 +393,18 @@ export default function ChatScreen() {
   // ── Send ──────────────────────────────────────────────────────────────────
 
   const handleSend = async (overrideText?: string) => {
+    if (isSwitchingThread) return;
+
     const textToSend = overrideText ?? input.trim();
     if (!textToSend && !attachedFileName) return;
     if (isLoading) return;
+
+    let targetThreadId = activeThreadId;
+    if (!targetThreadId) {
+      const createdId = await createThread();
+      if (!createdId) return;
+      targetThreadId = createdId;
+    }
 
     setRetryMessage(null);
 
@@ -249,25 +415,44 @@ export default function ChatScreen() {
     };
 
     // Auto-name the thread from first message
-    const currentMessages = threadMessages[activeThreadId] ?? [];
+    const currentMessages = threadMessages[targetThreadId] ?? [];
     const isFirstMessage = currentMessages.filter((m) => m.role === "user").length === 0;
 
-    updateMessages(activeThreadId, (prev) => [...prev, userMessage]);
+    updateMessages(targetThreadId, (prev) => [...prev, userMessage]);
     setInput("");
     setIsLoading(true);
     scrollToBottom();
 
     // Placeholder
     const assistantId = `${Date.now()}-assistant`;
-    updateMessages(activeThreadId, (prev) => [
+    updateMessages(targetThreadId, (prev) => [
       ...prev,
       { id: assistantId, role: "assistant", text: "…", streaming: true },
     ]);
     scrollToBottom();
 
+    const normalizedTitle = isFirstMessage ? threadName(textToSend) : undefined;
+
+    if (isAuthenticatedUser && user?.uid) {
+      try {
+        await appendChatMessage(user.uid, targetThreadId, {
+          role: "user",
+          content: userMessage.text,
+        });
+        await updateChatMetadata(user.uid, targetThreadId, {
+          title: normalizedTitle,
+          lastMessage: userMessage.text,
+          messageIncrement: 1,
+        });
+      } catch (error) {
+        console.log("Failed to persist user message", error);
+      }
+    }
+
     try {
       let responseText = "";
       let isRagUsed = false;
+      let backendStatus: string | undefined;
 
       // Try RAG first
       try {
@@ -281,6 +466,7 @@ export default function ChatScreen() {
 
         const ragData = await ragRes.json();
         const ragAnswer = ragData.response;
+        backendStatus = ragData.status;
 
         if (ragAnswer) {
           const lower = ragAnswer.toLowerCase();
@@ -311,29 +497,53 @@ export default function ChatScreen() {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const data = await response.json();
+        backendStatus = data.status;
         responseText =
           data.response ?? data.answer ?? data.message ?? "Sorry, I could not generate a response.";
       }
 
       const finalText = isRagUsed ? `📄 *From campus documents*\n\n${responseText}` : responseText;
 
-      updateMessages(activeThreadId, (prev) =>
+      updateMessages(targetThreadId, (prev) =>
         prev.map((m) =>
           m.id === assistantId ? { ...m, text: finalText, streaming: true } : m
         )
       );
 
+      if (isAuthenticatedUser && user?.uid) {
+        try {
+          const usedDatabase =
+            backendStatus === "sensor_response" ||
+            backendStatus === "text_to_flux_response";
+
+          await appendChatMessage(user.uid, targetThreadId, {
+            role: "assistant",
+            content: finalText,
+            intent: backendStatus,
+            usedDatabase,
+            usedGemini: true,
+          });
+          await updateChatMetadata(user.uid, targetThreadId, {
+            title: normalizedTitle,
+            lastMessage: finalText,
+            messageIncrement: 1,
+          });
+        } catch (error) {
+          console.log("Failed to persist assistant message", error);
+        }
+      }
+
       // Update thread metadata
-      const nameForThread = isFirstMessage ? threadName(textToSend) : undefined;
+      const nameForThread = normalizedTitle;
       setThreads((prev) => {
         const updated = prev.map((t) =>
-          t.id === activeThreadId
+          t.id === targetThreadId
             ? {
-                ...t,
-                name: nameForThread ?? t.name,
-                preview: finalText.replace(/[#*`>\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, 50),
-                updatedAt: Date.now(),
-              }
+              ...t,
+              name: nameForThread ?? t.name,
+              preview: finalText.replace(/[#*`>\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, 50),
+              updatedAt: Date.now(),
+            }
             : t
         );
         // Re-sort: most recently updated first
@@ -343,7 +553,7 @@ export default function ChatScreen() {
       scrollToBottom();
     } catch {
       const errorText = "Something went wrong. Please try again.";
-      updateMessages(activeThreadId, (prev) =>
+      updateMessages(targetThreadId, (prev) =>
         prev.map((m) =>
           m.id === assistantId
             ? { ...m, text: errorText, streaming: false, isError: true }
@@ -358,6 +568,8 @@ export default function ChatScreen() {
   };
 
   const handleStreamComplete = (msgId: string) => {
+    if (isAuthenticatedUser) return;
+
     setThreadMessages((prev) => {
       const msgs = prev[activeThreadId] ?? [];
       const updated = msgs.map((m) => (m.id === msgId ? { ...m, streaming: false } : m));
@@ -419,6 +631,12 @@ export default function ChatScreen() {
               {currentThreadName}
             </Text>
           </View>
+
+          {isSwitchingThread && (
+            <Text style={[styles.switchingText, { color: colors.muted, fontSize: getFontSize(12, largeText) }]}>
+              Loading chat...
+            </Text>
+          )}
 
           {/* ── Empty state ── */}
           {activeMessages.length === 0 && (
@@ -514,10 +732,14 @@ export default function ChatScreen() {
           threads={threads}
           activeThreadId={activeThreadId}
           onSelectThread={selectThread}
-          onNewThread={createThread}
+          onNewThread={() => {
+            createThread();
+          }}
           onDeleteThread={deleteThread}
           onClose={closeSidebar}
           translateX={sidebarAnim}
+          isCreatingThread={isCreatingThread}
+          isSwitchingThread={isSwitchingThread}
         />
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -578,6 +800,12 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { fontWeight: "800", marginBottom: 4, textAlign: "left" },
   emptySubtitle: { textAlign: "left", lineHeight: 20 },
+  switchingText: {
+    marginTop: 4,
+    marginBottom: 8,
+    paddingHorizontal: 4,
+    fontWeight: "500",
+  },
   chatList: {
     paddingTop: 8,
     paddingBottom: 12,

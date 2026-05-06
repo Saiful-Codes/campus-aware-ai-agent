@@ -4,9 +4,9 @@ import {
   ChevronRight,
   Clock,
   Info,
-  LogOut,
   MessageSquare,
   Moon,
+  Plus,
   Settings,
   Trash2,
 } from "lucide-react-native";
@@ -24,6 +24,14 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { getFontSize, palette } from "../../src/constants/theme";
 import { useAppSettings } from "../../src/context/AppSettingsContext";
 import { useAuth } from "../../src/context/AuthContext";
+import {
+  clearAllChatThreads,
+  createChatThread,
+  deleteChatThread,
+  subscribeChatThreads,
+} from "../../src/lib/chatThreads";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../../src/lib/firebase";
 
 // ── Storage keys (must match chat.tsx) ───────────────────────────────────────
 const THREADS_KEY = "campus_ai_threads_v2";
@@ -34,6 +42,11 @@ type ChatThread = {
   name: string;
   preview: string;
   updatedAt: number;
+};
+
+type UserProfileDoc = {
+  fullName?: string;
+  email?: string;
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -121,11 +134,13 @@ function ThreadRow({
   thread,
   colors,
   largeText,
+  onOpen,
   onDelete,
 }: {
   thread: ChatThread;
   colors: (typeof palette)["light"];
   largeText: boolean;
+  onOpen: () => void;
   onDelete: () => void;
 }) {
   return (
@@ -133,7 +148,7 @@ function ThreadRow({
       <View style={[threadS.dot, { backgroundColor: colors.primarySoft }]}>
         <MessageSquare color={colors.primary} size={13} />
       </View>
-      <View style={threadS.info}>
+      <Pressable onPress={onOpen} style={threadS.info}>
         <Text
           style={[threadS.name, { color: colors.text, fontSize: getFontSize(14, largeText) }]}
           numberOfLines={1}
@@ -144,7 +159,7 @@ function ThreadRow({
           {formatDate(thread.updatedAt)}
           {thread.preview ? ` · ${thread.preview.slice(0, 40)}` : ""}
         </Text>
-      </View>
+      </Pressable>
       <Pressable onPress={onDelete} hitSlop={10} style={threadS.deleteBtn}>
         <Trash2 color={colors.muted} size={15} />
       </Pressable>
@@ -179,17 +194,73 @@ const threadS = StyleSheet.create({
 export default function ProfileScreen() {
   const { themeMode, largeText } = useAppSettings();
   const colors = palette[themeMode];
-  const { user, isGuest, logout } = useAuth();
+  const { user, isGuest } = useAuth();
+  const isAuthenticatedUser = !!user?.uid && !isGuest;
 
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [showAllThreads, setShowAllThreads] = useState(false);
+  const [isCreatingChat, setIsCreatingChat] = useState(false);
+  const [profileFullName, setProfileFullName] = useState<string>("");
+  const [profileEmail, setProfileEmail] = useState<string>("");
 
-  const initial     = getInitial(user?.email, user?.displayName, isGuest);
-  const displayName = getDisplayName(user?.email, user?.displayName, isGuest);
-  const email       = isGuest ? "Browsing as guest" : user?.email ?? "";
+  const resolvedName = profileFullName || user?.displayName || user?.email?.split("@")[0] || "";
+  const initial = getInitial(profileEmail || user?.email, resolvedName, isGuest);
+  const displayName = getDisplayName(profileEmail || user?.email, resolvedName, isGuest);
+  const email = isGuest ? "Browsing as guest" : profileEmail || user?.email || "";
+
+  useEffect(() => {
+    if (!user?.uid || isGuest) {
+      setProfileFullName("");
+      setProfileEmail("");
+      return;
+    }
+
+    const loadProfile = async () => {
+      try {
+        const userRef = doc(db, "users", user.uid);
+        const snapshot = await getDoc(userRef);
+
+        if (!snapshot.exists()) {
+          setProfileFullName(user.displayName ?? "");
+          setProfileEmail(user.email ?? "");
+          return;
+        }
+
+        const data = snapshot.data() as UserProfileDoc;
+        setProfileFullName(data.fullName ?? user.displayName ?? "");
+        setProfileEmail(data.email ?? user.email ?? "");
+      } catch (error) {
+        console.log("Failed to load user profile", error);
+        setProfileFullName(user.displayName ?? "");
+        setProfileEmail(user.email ?? "");
+      }
+    };
+
+    loadProfile();
+  }, [user?.uid, isGuest]);
 
   // ── Load threads ────────────────────────────────────────────────────────────
   useEffect(() => {
+    if (isAuthenticatedUser && user?.uid) {
+      const unsubscribe = subscribeChatThreads(
+        user.uid,
+        (remoteThreads) => {
+          const mapped: ChatThread[] = remoteThreads.map((t) => ({
+            id: t.id,
+            name: t.title,
+            preview: t.lastMessage,
+            updatedAt: t.updatedAtMs,
+          }));
+          setThreads(mapped);
+        },
+        (error) => {
+          console.log("Failed to load remote threads", error);
+        }
+      );
+
+      return unsubscribe;
+    }
+
     const load = async () => {
       try {
         const raw = await AsyncStorage.getItem(THREADS_KEY);
@@ -197,13 +268,43 @@ export default function ProfileScreen() {
           const parsed: ChatThread[] = JSON.parse(raw);
           setThreads(parsed.sort((a, b) => b.updatedAt - a.updatedAt));
         }
-      } catch {}
+      } catch { }
     };
     load();
-  }, []);
+  }, [isAuthenticatedUser, user?.uid]);
+
+  const handleCreateNewChat = useCallback(async () => {
+    if (isCreatingChat) return;
+
+    if (isGuest || !user?.uid) {
+      Alert.alert("Login required", "Sign in to create synced chat history.");
+      return;
+    }
+
+    setIsCreatingChat(true);
+    try {
+      const chatId = await createChatThread(user.uid);
+      router.push({ pathname: "/chat", params: { chatId } });
+    } catch (error) {
+      console.log("Create chat failed", error);
+      Alert.alert("Could not create chat", "Please try again.");
+    } finally {
+      setIsCreatingChat(false);
+    }
+  }, [isCreatingChat, isGuest, user?.uid]);
 
   // ── Delete one thread ───────────────────────────────────────────────────────
   const deleteThread = useCallback(async (id: string) => {
+    if (isAuthenticatedUser && user?.uid) {
+      try {
+        await deleteChatThread(user.uid, id);
+      } catch (error) {
+        console.log("Delete thread failed", error);
+        Alert.alert("Could not delete chat", "Please try again.");
+      }
+      return;
+    }
+
     const updated = threads.filter((t) => t.id !== id);
     setThreads(updated);
     try {
@@ -218,8 +319,8 @@ export default function ProfileScreen() {
       // If deleted thread was active, clear active pointer
       const activeId = await AsyncStorage.getItem(ACTIVE_THREAD_KEY);
       if (activeId === id) await AsyncStorage.removeItem(ACTIVE_THREAD_KEY);
-    } catch {}
-  }, [threads]);
+    } catch { }
+  }, [isAuthenticatedUser, user?.uid, threads]);
 
   // ── Clear all threads ────────────────────────────────────────────────────────
   const clearAllThreads = () => {
@@ -232,34 +333,30 @@ export default function ProfileScreen() {
           text: "Clear all",
           style: "destructive",
           onPress: async () => {
-            setThreads([]);
             try {
-              await AsyncStorage.multiRemove([
-                THREADS_KEY,
-                `${THREADS_KEY}_messages`,
-                ACTIVE_THREAD_KEY,
-              ]);
-            } catch {}
+              if (isAuthenticatedUser && user?.uid) {
+                await clearAllChatThreads(user.uid);
+              } else {
+                await AsyncStorage.multiRemove([
+                  THREADS_KEY,
+                  `${THREADS_KEY}_messages`,
+                  ACTIVE_THREAD_KEY,
+                ]);
+              }
+              setThreads([]);
+            } catch (error) {
+              console.log("Clear all chat history failed", error);
+              Alert.alert("Could not clear chat history", "Please try again.");
+            }
           },
         },
       ]
     );
   };
 
-  // ── Sign out ─────────────────────────────────────────────────────────────────
-  const handleSignOut = () => {
-    Alert.alert("Sign out", "Are you sure you want to sign out?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Sign out",
-        style: "destructive",
-        onPress: async () => {
-          await logout();
-          router.replace("/login");
-        },
-      },
-    ]);
-  };
+  const openThread = useCallback((chatId: string) => {
+    router.push({ pathname: "/chat", params: { chatId } });
+  }, []);
 
   const visibleThreads = showAllThreads ? threads : threads.slice(0, 4);
 
@@ -300,6 +397,16 @@ export default function ProfileScreen() {
         <Text style={[s.sectionLabel, { color: colors.muted, fontSize: getFontSize(11, largeText) }]}>
           CHAT HISTORY
         </Text>
+        <Pressable
+          onPress={handleCreateNewChat}
+          disabled={isCreatingChat}
+          style={[s.newChatBtn, { backgroundColor: colors.primary, opacity: isCreatingChat ? 0.6 : 1 }]}
+        >
+          <Plus color="#fff" size={16} />
+          <Text style={[s.newChatText, { fontSize: getFontSize(14, largeText) }]}>
+            {isCreatingChat ? "Creating..." : "New Chat"}
+          </Text>
+        </Pressable>
         <View style={[s.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
           {threads.length === 0 ? (
             <View style={s.emptyHistory}>
@@ -316,6 +423,7 @@ export default function ProfileScreen() {
                     thread={thread}
                     colors={colors}
                     largeText={largeText}
+                    onOpen={() => openThread(thread.id)}
                     onDelete={() => deleteThread(thread.id)}
                   />
                 </View>
@@ -382,20 +490,6 @@ export default function ProfileScreen() {
             largeText={largeText}
           />
         </View>
-
-        {/* ── Sign out button ── */}
-        <Pressable
-          onPress={handleSignOut}
-          style={({ pressed }) => [
-            s.signOutBtn,
-            { opacity: pressed ? 0.8 : 1 },
-          ]}
-        >
-          <LogOut color="#fff" size={17} strokeWidth={2.5} />
-          <Text style={[s.signOutText, { fontSize: getFontSize(15, largeText) }]}>
-            Sign out
-          </Text>
-        </Pressable>
 
         {/* ── Footer ── */}
         <Text style={[s.footer, { color: colors.muted, fontSize: getFontSize(11, largeText) }]}>
@@ -465,6 +559,20 @@ const s = StyleSheet.create({
     marginBottom: 24,
     overflow: "hidden",
   },
+  newChatBtn: {
+    marginBottom: 10,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  newChatText: {
+    color: "#fff",
+    fontWeight: "700",
+  },
   divider: { height: 1, marginHorizontal: 16 },
 
   // Chat history
@@ -491,19 +599,6 @@ const s = StyleSheet.create({
     borderTopWidth: 1,
   },
   clearAllText: { color: "#DC2626", fontWeight: "600" },
-
-  // Sign out
-  signOutBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: "#DC2626",
-    borderRadius: 16,
-    paddingVertical: 15,
-    marginBottom: 24,
-  },
-  signOutText: { color: "#fff", fontWeight: "700" },
 
   // Footer
   footer: {
