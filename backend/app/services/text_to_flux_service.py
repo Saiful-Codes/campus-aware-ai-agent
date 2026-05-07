@@ -47,7 +47,7 @@ Important Flux rules:
 - Use pivot only when returning multiple fields together.
 - For max(), min(), mean(), and count(), use group() before the aggregate so the result is a single overall value.
 - For highest temperature, generate:
-  from(bucket: "sensor_data")
+  from(bucket: "{INFLUX_BUCKET}")
     |> range(start: -30d)
     |> filter(fn: (r) => r["_measurement"] == "sensor_readings")
     |> filter(fn: (r) => r["_field"] == "temperature")
@@ -55,19 +55,86 @@ Important Flux rules:
     |> max()
 - For average temperature, use group() |> mean().
 - For count queries, use group() |> count().
+- For temperature trends over time, generate:
+  from(bucket: "{INFLUX_BUCKET}")
+    |> range(start: -7d)
+    |> filter(fn: (r) => r["_measurement"] == "sensor_readings")
+    |> filter(fn: (r) => r["_field"] == "temperature")
+    |> aggregateWindow(every: 1h, fn: mean)
+    |> limit(n: 20)
+- Never query the entire bucket without a range().
+- Never use range(start: 0).
+- Always keep query results small and efficient.
+- Prefer aggregate queries over raw row outputs.
+- If the user asks for trends over time, use aggregateWindow().
+- For trend queries, use aggregateWindow(every: 1h, fn: mean).
+- Never return more than 20 rows.
+- Avoid returning raw ungrouped sensor records unless explicitly requested.
+- If the question is ambiguous, prefer safe aggregate summaries.
+- Always include limit(n: 20) for non-aggregate queries.
 """
 
+def get_default_time_range(user_question: str) -> str:
+    question = user_question.lower()
+
+    if "last hour" in question or "past hour" in question:
+        return "-1h"
+
+    if "today" in question:
+        return "-24h"
+
+    if "yesterday" in question:
+        return "-48h"
+
+    if "last week" in question or "this week" in question or "past week" in question:
+        return "-7d"
+
+    if "last month" in question or "this month" in question or "past month" in question:
+        return "-30d"
+
+    if "last year" in question or "this year" in question or "past year" in question:
+        return "-365d"
+
+    return "-30d"
 
 def clean_flux_output(text: str) -> str:
     text = text.strip()
     text = text.replace("```flux", "")
     text = text.replace("```", "")
-    return text.strip()
+
+    cleaned = text.strip()
+    cleaned_lower = cleaned.lower()
+
+    # Add safety limit automatically for raw queries
+    has_limit = "limit(" in cleaned_lower
+
+    has_aggregate = any(
+        agg in cleaned_lower
+        for agg in [
+            "mean()",
+            "max()",
+            "min()",
+            "count()",
+            "aggregatewindow",
+        ]
+    )
+
+    if not has_limit and not has_aggregate:
+        cleaned += '\n  |> limit(n: 20)'
+
+    return cleaned
 
 
 def generate_flux_from_question(user_question: str) -> str:
+    default_range = get_default_time_range(user_question)
     prompt = f"""
 {FLUX_SCHEMA}
+
+Default time range selected:
+{default_range}
+
+Important:
+- Use range(start: {default_range}) unless the user clearly asks for a different time period.
 
 User question:
 {user_question}
@@ -132,12 +199,21 @@ def run_flux_query(flux_query: str):
 
         for table in tables:
             for record in table.records:
+                value = record.get_value()
+
+                # Convert unsupported / messy values safely
+                if isinstance(value, float):
+                    value = round(value, 2)
+
                 results.append({
-                    "time": str(record.get_time()),
+                    "time": str(record.get_time()) if record.get_time() else None,
                     "field": record.values.get("_field"),
-                    "value": record.get_value(),
+                    "value": value,
                     "measurement": record.values.get("_measurement"),
                 })
+
+        if not results:
+            return []
 
         return results[:20]
 
@@ -157,6 +233,12 @@ Flux query used:
 
 InfluxDB result:
 {query_result}
+
+Important:
+- Keep the response under 120 words.
+- Summarize instead of listing all rows.
+- If multiple records exist, describe the overall pattern briefly.
+- Do not dump raw JSON.
 
 Write a short, clear, human-friendly answer.
 Do not mention Flux unless necessary.
@@ -181,7 +263,9 @@ If no data is found, say no matching sensor data was found.
 def answer_sensor_flux_question(user_question: str):
     flux_query = generate_flux_from_question(user_question)
 
-    print(f"Generated Flux:\n{flux_query}")
+    print("\n===== GENERATED FLUX QUERY =====")
+    print(flux_query)
+    print("================================\n")
 
     if not is_safe_flux_query(flux_query):
         return {
@@ -193,7 +277,28 @@ def answer_sensor_flux_question(user_question: str):
 
     query_result = run_flux_query(flux_query)
 
-    answer = format_flux_result(user_question, flux_query, query_result)
+    if not query_result:
+        return {
+            "answer": "No matching sensor data was found for that query.",
+            "status": "text_to_flux_no_data",
+            "flux": flux_query,
+            "data": [],
+        }
+
+    try:
+        answer = format_flux_result(
+            user_question,
+            flux_query,
+            query_result,
+        )
+
+    except Exception as e:
+        print(f"Flux formatting fallback triggered: {e}")
+
+        answer = (
+            "The sensor query completed successfully, "
+            "but the response formatter failed."
+        )
 
     return {
         "answer": answer,

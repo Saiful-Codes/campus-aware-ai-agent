@@ -18,7 +18,7 @@ services:
    container_name: campus_ai_influxdb
    restart: always
    ports:
-    - "8086:8086"
+    - "18086:8086"
    volumes:
     - influxdb_data:/var/lib/influxdb2
    environment:
