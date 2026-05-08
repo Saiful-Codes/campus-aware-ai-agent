@@ -1,5 +1,12 @@
+import re
 from typing import Dict, List
 
+YEAR_PATTERN = re.compile(r'\b(19|20)\d{2}\b')
+
+MONTH_NAMES = [
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december",
+]
 
 SENSOR_KEYWORDS = [
     "temperature",
@@ -35,6 +42,10 @@ SENSOR_HISTORY_KEYWORDS = [
     "last week",
     "last month",
     "over time",
+    "show all",
+    "all readings",
+    "all sensor",
+    "readings from",
 ]
 
 SENSOR_LIVE_KEYWORDS = [
@@ -100,19 +111,24 @@ def is_sensor_history_query(message: str) -> bool:
     if not message:
         return False
     text = message.lower()
-    return _contains_any(text, SENSOR_KEYWORDS) and _contains_any(text, SENSOR_HISTORY_KEYWORDS)
+    if not _contains_any(text, SENSOR_KEYWORDS):
+        return False
+    if _contains_any(text, SENSOR_HISTORY_KEYWORDS):
+        return True
+    if YEAR_PATTERN.search(text):
+        return True
+    if _contains_any(text, MONTH_NAMES):
+        return True
+    return False
 
 
 def is_sensor_live_query(message: str) -> bool:
     if not message:
         return False
-
     text = message.lower()
-    has_sensor_term = _contains_any(text, SENSOR_KEYWORDS)
-    has_live_term = _contains_any(text, SENSOR_LIVE_KEYWORDS)
-
-    # Keep existing behavior: any sensor-like wording counts as live when not history.
-    return has_sensor_term and not is_sensor_history_query(text) or (has_sensor_term and has_live_term)
+    if is_sensor_history_query(text):
+        return False
+    return _contains_any(text, SENSOR_KEYWORDS)
 
 
 def is_sensor_query(message: str) -> bool:
