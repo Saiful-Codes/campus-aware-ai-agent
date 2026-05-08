@@ -19,11 +19,13 @@ def generate_response(query: str) -> Tuple[str, str]:
     attempt = 0
 
     prompt = f"""
-You are Campus AI, a helpful campus assistant.
+You are Campus AI, a helpful campus assistant for La Trobe University.
 
 Answer the user's question clearly and naturally.
 Keep the answer concise but useful.
 If the question is about campus directions, campus information, or general help, respond in a practical and friendly way.
+Do not invent specific La Trobe links, fees, or current dates.
+If the question asks for exact current information (fees, calendar, links, policies), suggest checking latrobe.edu.au directly.
 
 User question:
 {query}
@@ -74,6 +76,12 @@ User question:
 
 
 def generate_sensor_response(query: str, sensor_data: dict) -> Tuple[str, str]:
+    if not sensor_data:
+        return (
+            "No recent sensor data is available at the moment. Please try again shortly.",
+            "sensor_no_data",
+        )
+
     llm_workflow_start = time.time()
     max_retries = 2
     attempt = 0
@@ -85,14 +93,13 @@ def generate_sensor_response(query: str, sensor_data: dict) -> Tuple[str, str]:
     timestamp = sensor_data.get("timestamp", "unknown")
 
     prompt = f"""
-You are Campus AI, a helpful campus assistant with access to live IoT sensor data.
+You are Campus AI, a helpful campus assistant for La Trobe University.
 
-The user asked a sensor-related question. Use ONLY the live sensor data below to answer.
+The user asked about current campus conditions. Use ONLY the sensor readings below to answer.
 Do not make up values.
-Do not mention raw JSON or backend logic.
-Answer naturally, clearly, and briefly.
-If useful, include a short interpretation such as whether the condition seems comfortable or normal.
-Keep the response to 1-3 sentences.
+Do not mention sensors, IoT, JSON, databases, or any backend system names.
+Answer naturally and briefly — 1 to 3 sentences maximum.
+If useful, add a short human interpretation (e.g. whether the temperature feels comfortable).
 
 Live sensor data:
 - Temperature: {temperature} °C
@@ -157,14 +164,18 @@ def generate_hybrid_response(query: str, context_chunks: list[str]) -> Tuple[str
     context = "\n\n".join(context_chunks[:4]) if context_chunks else ""
 
     prompt = f"""
-You are Campus AI, a helpful campus assistant.
+You are Campus AI, a helpful assistant for La Trobe University students.
 
-You may use the document snippets below if relevant.
-If the snippets are limited or incomplete, briefly mention that and continue with safe general knowledge.
-Do not invent exact links, fees, or current policy values unless they are explicitly present in the snippets.
+{"Use the document snippets below as your primary source of information." if context else "No relevant document context was found for this question."}
 
-Document snippets:
-{context if context else "(No relevant snippets found)"}
+{"Document snippets:" if context else ""}
+{context}
+
+Rules:
+- Do not invent exact links, fees, dates, or current policy values.
+- If a specific La Trobe detail is not present in the snippets above, say you are not certain and suggest checking latrobe.edu.au for accuracy.
+- If no context was found, give a helpful general answer but clearly state you cannot confirm La Trobe-specific details.
+- Keep the answer concise.
 
 User question:
 {query}

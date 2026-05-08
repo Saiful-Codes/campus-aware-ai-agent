@@ -29,15 +29,15 @@ def _extract_urls_from_chunks(chunks: list[str]) -> list[str]:
 def _safe_exact_info_response(query: str, urls: list[str]) -> str:
     if urls:
         return (
-            "I found a document link that may help:\n"
+            "I found a reference in the available documents that may help:\n"
             f"- {urls[0]}\n\n"
-            "Please verify it is the latest official page before relying on it."
+            "Please verify this is the current official page — document contents may not reflect the latest updates."
         )
 
     return (
-        "I can't safely provide an exact current link or fee from trusted official sources with the "
-        "data currently available to me. Please verify on official La Trobe pages (for example, "
-        "latrobe.edu.au) or share the source document so I can reference it precisely."
+        "I can't safely provide exact current information for this query. "
+        "For accurate fees, links, dates, or official policies, please visit "
+        "**latrobe.edu.au** directly or contact La Trobe student services."
     )
 
 
