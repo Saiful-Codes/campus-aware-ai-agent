@@ -54,5 +54,6 @@ backend/ragData/
 # raw historical sensor data
 data/sensor/raw/
 
-# claude
+# claude artifacts
 .claude/
+docs/superpowers/
