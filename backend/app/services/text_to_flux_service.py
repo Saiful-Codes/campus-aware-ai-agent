@@ -261,18 +261,26 @@ def is_safe_flux_query(flux_query: str) -> bool:
         "http",
         "experimental",
         "to(",
-        "from(bucket:",
     ]
 
+    # Must use correct bucket
     if f'from(bucket: "{INFLUX_BUCKET.lower()}"' not in query:
         return False
 
-    if 'r["_measurement"] == "sensor_readings"' not in query and 'r._measurement == "sensor_readings"' not in query:
+    # Must include measurement filter
+    if ('r["_measurement"] == "sensor_readings"' not in query and 'r._measurement == "sensor_readings"' not in query):
         return False
 
+    # Must include range()
+    if "range(" not in query:
+        return False
+    
+    # Must reference at least one approved sensor field
+    if not any(field in query for field in SENSOR_FIELDS):
+        return False
+
+    # Block dangerous terms
     for term in blocked_terms:
-        if term == "from(bucket:":
-            continue
         if term in query:
             return False
 
@@ -284,7 +292,12 @@ def run_flux_query(flux_query: str):
     query_api = influx_client.query_api()
 
     try:
-        tables = query_api.query(query=flux_query, org=INFLUX_ORG)
+        try:
+            tables = query_api.query(query=flux_query, org=INFLUX_ORG)
+        except Exception as e:
+            print(f"Influx query execution failed: {e}")
+            return []
+          
         results = []
 
         for table in tables:
