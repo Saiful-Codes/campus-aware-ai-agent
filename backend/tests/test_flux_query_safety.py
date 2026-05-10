@@ -1,4 +1,10 @@
 from app.services.text_to_flux_service import is_safe_flux_query
+from unittest.mock import MagicMock, patch
+from app.services.text_to_flux_service import (
+    answer_sensor_flux_question,
+    run_flux_query,
+)
+
 
 
 VALID_QUERY = """
@@ -82,3 +88,48 @@ def test_blocks_unknown_field_only():
 
 def test_passes_valid_safe_query():
     assert is_safe_flux_query(VALID_QUERY) is True
+
+
+def test_run_flux_query_caps_results_at_20_records():
+    mock_records = []
+
+    for i in range(25):
+        mock_record = MagicMock()
+
+        mock_record.get_value.return_value = 20.5
+        mock_record.get_time.return_value = "2026-05-10T00:00:00Z"
+
+        mock_record.values = {
+            "_field": "temperature"
+        }
+
+        mock_records.append(mock_record)
+
+    mock_table = MagicMock()
+    mock_table.records = mock_records
+
+    mock_query_api = MagicMock()
+    mock_query_api.query.return_value = [mock_table]
+
+    mock_client = MagicMock()
+    mock_client.query_api.return_value = mock_query_api
+
+    with patch(
+        "app.services.text_to_flux_service.get_influx_client",
+        return_value=mock_client,
+    ):
+        results = run_flux_query(VALID_QUERY)
+
+    assert len(results) == 20
+
+
+def test_answer_sensor_flux_question_returns_blocked_status():
+    with patch(
+        "app.services.text_to_flux_service.generate_flux_from_question",
+        return_value='from(bucket: "bad_bucket")',
+    ):
+        result = answer_sensor_flux_question(
+            "Show me temperature readings"
+        )
+
+    assert result["status"] == "text_to_flux_blocked"
