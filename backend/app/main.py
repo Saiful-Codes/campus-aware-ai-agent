@@ -25,6 +25,18 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if settings.APP_ENV in {"production", "staging"}:
+        logger.info(
+            "Backend starting in %s — validating required env vars.",
+            settings.APP_ENV,
+        )
+        settings.validate_required(strict=True)
+    else:
+        logger.info(
+            "Backend starting in %s — skipping strict env validation.",
+            settings.APP_ENV,
+        )
+
     logger.info("Backend starting — launching sensor ingestion scheduler.")
     task = asyncio.create_task(run_sensor_ingestion_loop())
     yield

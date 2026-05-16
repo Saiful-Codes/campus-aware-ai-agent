@@ -28,5 +28,41 @@ class Settings:
 
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
+    @classmethod
+    def validate_required(cls, strict: bool = True) -> list[str]:
+        """Return a list of missing required env var names.
+
+        When strict=True, raise RuntimeError if any are missing. Used by the
+        FastAPI lifespan to fail fast on production startup.
+        """
+        missing: list[str] = []
+
+        if not os.getenv("GEMINI_API_KEY"):
+            missing.append("GEMINI_API_KEY")
+
+        for name in ("INFLUXDB_URL", "INFLUXDB_TOKEN", "INFLUXDB_ORG", "INFLUXDB_BUCKET"):
+            if not os.getenv(name):
+                missing.append(name)
+
+        postgres_uppercase = all(
+            os.getenv(n) for n in ("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD")
+        )
+        postgres_underscore = all(
+            os.getenv(n) for n in ("DB_NAME", "DB_USER", "DB_PASSWORD")
+        )
+
+        if not (postgres_uppercase or postgres_underscore):
+            missing.append(
+                "POSTGRES_DB/POSTGRES_USER/POSTGRES_PASSWORD (or DB_NAME/DB_USER/DB_PASSWORD)"
+            )
+
+        if strict and missing:
+            raise RuntimeError(
+                "Backend startup blocked — the following required environment "
+                "variables are missing: " + ", ".join(missing)
+            )
+
+        return missing
+
 
 settings = Settings()
