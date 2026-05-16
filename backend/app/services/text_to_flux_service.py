@@ -325,7 +325,12 @@ def run_flux_query(flux_query: str):
         influx_client.close()
 
 
-def format_flux_result(user_question: str, flux_query: str, query_result: list) -> str:
+def format_flux_result(
+    user_question: str,
+    flux_query: str,
+    query_result: list,
+    time_label: str = "the requested time range",
+) -> str:
     record_count = len(query_result)
     is_time_series = record_count > 1
 
@@ -334,6 +339,9 @@ You are a helpful campus sensor data assistant.
 
 User question:
 {user_question}
+
+The user asked about: {time_label}.
+If you mention the time period in your answer, use phrasing consistent with "{time_label}".
 
 Sensor data result ({record_count} record{"s" if record_count != 1 else ""}):
 {query_result}
@@ -394,6 +402,7 @@ def answer_sensor_flux_question(user_question: str):
             user_question,
             flux_query,
             query_result,
+            time_label=time_info["label"],
         )
 
     except Exception as e:

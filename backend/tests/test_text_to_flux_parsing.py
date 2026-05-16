@@ -247,3 +247,82 @@ def test_no_data_message_includes_time_range_hint():
 def test_no_data_message_for_year_label():
     msg = _build_no_data_message("1995")
     assert "1995" in msg
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5: time_label threading into format_flux_result
+# ---------------------------------------------------------------------------
+
+from unittest.mock import MagicMock, patch
+
+import app.services.text_to_flux_service as t2f
+
+
+def test_format_flux_result_passes_time_label_into_prompt():
+    captured_prompts = []
+
+    fake_response = MagicMock()
+    fake_response.text = "It was warm."
+
+    def fake_generate(*args, **kwargs):
+        captured_prompts.append(kwargs.get("contents", ""))
+        return fake_response
+
+    fake_client = MagicMock()
+    fake_client.models.generate_content.side_effect = fake_generate
+
+    with patch.object(t2f, "client", fake_client):
+        t2f.format_flux_result(
+            user_question="What was the temperature yesterday?",
+            flux_query="from(bucket: \"x\")",
+            query_result=[{"time": None, "field": "temperature", "value": 22.0}],
+            time_label="yesterday",
+        )
+
+    assert any("yesterday" in p for p in captured_prompts)
+
+
+def test_format_flux_result_default_time_label_is_safe():
+    fake_response = MagicMock()
+    fake_response.text = "ok"
+
+    fake_client = MagicMock()
+    fake_client.models.generate_content.return_value = fake_response
+
+    with patch.object(t2f, "client", fake_client):
+        # Backward compatibility: omitting time_label must not raise.
+        result = t2f.format_flux_result(
+            "q",
+            "flux",
+            [{"time": None, "field": "temperature", "value": 22.0}],
+        )
+
+    assert result == "ok"
+
+
+def test_answer_sensor_flux_question_forwards_time_label():
+    captured_prompts = []
+
+    fake_response = MagicMock()
+    fake_response.text = "trend looks stable"
+
+    def fake_generate(*args, **kwargs):
+        captured_prompts.append(kwargs.get("contents", ""))
+        return fake_response
+
+    fake_client = MagicMock()
+    fake_client.models.generate_content.side_effect = fake_generate
+
+    with patch.object(t2f, "client", fake_client), \
+         patch.object(t2f, "generate_flux_from_question", return_value=(
+             'from(bucket: "sensor_data") |> range(start: -48h) '
+             '|> filter(fn: (r) => r["_measurement"] == "sensor_readings") '
+             '|> filter(fn: (r) => r["_field"] == "temperature") |> mean()'
+         )), \
+         patch.object(t2f, "run_flux_query", return_value=[
+             {"time": None, "field": "temperature", "value": 22.0}
+         ]):
+        t2f.answer_sensor_flux_question("What was the temperature yesterday?")
+
+    # The formatter prompt must mention "yesterday".
+    assert any("yesterday" in p for p in captured_prompts)
