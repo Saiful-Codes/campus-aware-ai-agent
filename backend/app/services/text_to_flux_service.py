@@ -254,6 +254,13 @@ def is_safe_flux_query(flux_query: str) -> bool:
 
     query = flux_query.lower()
 
+    # Defensive guard: if INFLUXDB_BUCKET env is missing/empty, refuse to
+    # validate. Returning False routes the request through the existing
+    # text_to_flux_blocked status instead of raising 500.
+    if not INFLUX_BUCKET:
+        print("is_safe_flux_query blocked: INFLUXDB_BUCKET env var is not set")
+        return False
+
     blocked_terms = [
         "delete",
         "drop",
