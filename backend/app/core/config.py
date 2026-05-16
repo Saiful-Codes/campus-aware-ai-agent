@@ -10,6 +10,33 @@ ENV_PATH = BASE_DIR / ".env"
 load_dotenv(dotenv_path=ENV_PATH)
 
 
+def _alias_postgres_env() -> None:
+    """Mirror POSTGRES_*/DB_* env conventions so either set works end-to-end.
+
+    The Settings class reads POSTGRES_*; the RAG pipeline reads DB_* directly.
+    If only one set is present, fill the other from it so both consumers see
+    consistent values. When both are set, neither is overwritten — explicit
+    values win over inference.
+    """
+    pairs = (
+        ("POSTGRES_DB", "DB_NAME"),
+        ("POSTGRES_USER", "DB_USER"),
+        ("POSTGRES_PASSWORD", "DB_PASSWORD"),
+        ("POSTGRES_HOST", "DB_HOST"),
+        ("POSTGRES_PORT", "DB_PORT"),
+    )
+    for postgres_name, db_name in pairs:
+        postgres_value = os.getenv(postgres_name)
+        db_value = os.getenv(db_name)
+        if postgres_value and not db_value:
+            os.environ[db_name] = postgres_value
+        elif db_value and not postgres_value:
+            os.environ[postgres_name] = db_value
+
+
+_alias_postgres_env()
+
+
 class Settings:
     APP_ENV = os.getenv("APP_ENV", "development")
     APP_HOST = os.getenv("APP_HOST", "127.0.0.1")
