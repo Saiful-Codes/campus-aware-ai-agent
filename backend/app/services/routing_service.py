@@ -70,7 +70,6 @@ EXACT_CURRENT_INFO_KEYWORDS = [
     "url",
     "website",
     "link",
-    "2026",
     "calendar",
     "academic calendar",
     "current fee",

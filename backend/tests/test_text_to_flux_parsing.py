@@ -247,3 +247,141 @@ def test_no_data_message_includes_time_range_hint():
 def test_no_data_message_for_year_label():
     msg = _build_no_data_message("1995")
     assert "1995" in msg
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5: time_label threading into format_flux_result
+# ---------------------------------------------------------------------------
+
+from unittest.mock import MagicMock, patch
+
+import app.services.text_to_flux_service as t2f
+
+
+def test_format_flux_result_passes_time_label_into_prompt():
+    captured_prompts = []
+
+    fake_response = MagicMock()
+    fake_response.text = "It was warm."
+
+    def fake_generate(*args, **kwargs):
+        captured_prompts.append(kwargs.get("contents", ""))
+        return fake_response
+
+    fake_client = MagicMock()
+    fake_client.models.generate_content.side_effect = fake_generate
+
+    with patch.object(t2f, "client", fake_client):
+        t2f.format_flux_result(
+            user_question="What was the temperature yesterday?",
+            flux_query="from(bucket: \"x\")",
+            query_result=[{"time": None, "field": "temperature", "value": 22.0}],
+            time_label="yesterday",
+        )
+
+    assert any("yesterday" in p for p in captured_prompts)
+
+
+def test_format_flux_result_default_time_label_is_safe():
+    fake_response = MagicMock()
+    fake_response.text = "ok"
+
+    fake_client = MagicMock()
+    fake_client.models.generate_content.return_value = fake_response
+
+    with patch.object(t2f, "client", fake_client):
+        # Backward compatibility: omitting time_label must not raise.
+        result = t2f.format_flux_result(
+            "q",
+            "flux",
+            [{"time": None, "field": "temperature", "value": 22.0}],
+        )
+
+    assert result == "ok"
+
+
+def test_answer_sensor_flux_question_forwards_time_label():
+    captured_prompts = []
+
+    fake_response = MagicMock()
+    fake_response.text = "trend looks stable"
+
+    def fake_generate(*args, **kwargs):
+        captured_prompts.append(kwargs.get("contents", ""))
+        return fake_response
+
+    fake_client = MagicMock()
+    fake_client.models.generate_content.side_effect = fake_generate
+
+    with patch.object(t2f, "client", fake_client), \
+         patch.object(t2f, "generate_flux_from_question", return_value=(
+             'from(bucket: "sensor_data") |> range(start: -48h) '
+             '|> filter(fn: (r) => r["_measurement"] == "sensor_readings") '
+             '|> filter(fn: (r) => r["_field"] == "temperature") |> mean()'
+         )), \
+         patch.object(t2f, "run_flux_query", return_value=[
+             {"time": None, "field": "temperature", "value": 22.0}
+         ]):
+        t2f.answer_sensor_flux_question("What was the temperature yesterday?")
+
+    # The formatter prompt must mention "yesterday".
+    assert any("yesterday" in p for p in captured_prompts)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5: human-readable record formatting helper
+# ---------------------------------------------------------------------------
+
+from app.services.text_to_flux_service import _format_records_for_prompt
+
+
+def test_format_records_single_temperature_with_time():
+    out = _format_records_for_prompt([
+        {"time": "2026-05-15T10:00:00Z", "field": "temperature", "value": 22.3}
+    ])
+    assert "temperature: 22.3 °C" in out
+    assert "at 2026-05-15T10:00:00Z" in out
+
+
+def test_format_records_humidity_units():
+    out = _format_records_for_prompt([
+        {"time": None, "field": "humidity", "value": 58.0}
+    ])
+    assert "humidity: 58.0 %" in out
+    assert "at " not in out
+
+
+def test_format_records_pressure_units():
+    out = _format_records_for_prompt([
+        {"time": None, "field": "pressure", "value": 1013.2}
+    ])
+    assert "pressure: 1013.2 hPa" in out
+
+
+def test_format_records_dew_point_units():
+    out = _format_records_for_prompt([
+        {"time": None, "field": "dew_point", "value": 12.5}
+    ])
+    assert "dew_point: 12.5 °C" in out
+
+
+def test_format_records_multiple_lines():
+    out = _format_records_for_prompt([
+        {"time": None, "field": "temperature", "value": 22.0},
+        {"time": None, "field": "temperature", "value": 23.5},
+    ])
+    lines = [line for line in out.splitlines() if line.strip()]
+    assert len(lines) == 2
+
+
+def test_format_records_unknown_field_uses_no_unit():
+    out = _format_records_for_prompt([
+        {"time": None, "field": "mystery", "value": 7.0}
+    ])
+    # Should still produce a sensible line, just without a unit suffix.
+    assert "mystery: 7.0" in out
+    assert "°C" not in out
+
+
+def test_format_records_empty_list_returns_empty_string():
+    assert _format_records_for_prompt([]) == ""

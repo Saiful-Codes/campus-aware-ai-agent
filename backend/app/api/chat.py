@@ -66,6 +66,24 @@ def chat(request: ChatRequest):
     print("\n===== NEW CHAT REQUEST =====")
     print(f"User query: {request.query}")
 
+    if not (request.query or "").strip():
+        print("Empty query short-circuit — skipping routing and LLM call.")
+        return _with_debug(
+            request,
+            "Please type a question and I'll help.",
+            "empty_query",
+            {
+                "selectedRoute": "empty_query",
+                "intent": "empty_query",
+                "intentConfidence": 1.0,
+                "ragConfidence": None,
+                "fallbackUsed": False,
+                "sourcesUsed": [],
+                "fallbackReason": "",
+                "reason": "Empty or whitespace-only query short-circuited before routing.",
+            },
+        )
+
     intent_data = classify_query_intent(request.query)
     intent = str(intent_data["intent"])
 

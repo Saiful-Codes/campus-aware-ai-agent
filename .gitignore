@@ -57,3 +57,6 @@ data/sensor/raw/
 # claude artifacts
 .claude/
 docs/superpowers/
+CLAUDE.md
+progress.md
+plan.md

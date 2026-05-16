@@ -133,3 +133,18 @@ def test_answer_sensor_flux_question_returns_blocked_status():
         )
 
     assert result["status"] == "text_to_flux_blocked"
+
+
+import app.services.text_to_flux_service as t2f
+
+
+def test_is_safe_flux_query_returns_false_when_bucket_env_missing(monkeypatch):
+    monkeypatch.setattr(t2f, "INFLUX_BUCKET", None)
+
+    assert t2f.is_safe_flux_query(VALID_QUERY) is False
+
+
+def test_is_safe_flux_query_returns_false_when_bucket_env_empty(monkeypatch):
+    monkeypatch.setattr(t2f, "INFLUX_BUCKET", "")
+
+    assert t2f.is_safe_flux_query(VALID_QUERY) is False
