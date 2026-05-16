@@ -325,6 +325,42 @@ def run_flux_query(flux_query: str):
         influx_client.close()
 
 
+_FIELD_UNITS = {
+    "temperature": "°C",
+    "humidity": "%",
+    "pressure": "hPa",
+    "dew_point": "°C",
+}
+
+
+def _format_records_for_prompt(records: list) -> str:
+    """Render Flux result records as one human-readable line per record.
+
+    Example output:
+        temperature: 22.3 °C at 2026-05-15T10:00:00Z
+        humidity: 58.0 % at 2026-05-15T10:00:00Z
+    """
+    if not records:
+        return ""
+
+    lines = []
+
+    for record in records:
+        field = record.get("field", "value")
+        value = record.get("value")
+        time_str = record.get("time")
+        unit = _FIELD_UNITS.get(field, "")
+
+        value_part = f"{field}: {value} {unit}".rstrip()
+
+        if time_str:
+            lines.append(f"{value_part} at {time_str}")
+        else:
+            lines.append(value_part)
+
+    return "\n".join(lines)
+
+
 def format_flux_result(
     user_question: str,
     flux_query: str,
@@ -344,7 +380,7 @@ The user asked about: {time_label}.
 If you mention the time period in your answer, use phrasing consistent with "{time_label}".
 
 Sensor data result ({record_count} record{"s" if record_count != 1 else ""}):
-{query_result}
+{_format_records_for_prompt(query_result)}
 
 Rules:
 - Answer in under 100 words.

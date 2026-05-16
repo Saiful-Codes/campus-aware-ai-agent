@@ -326,3 +326,62 @@ def test_answer_sensor_flux_question_forwards_time_label():
 
     # The formatter prompt must mention "yesterday".
     assert any("yesterday" in p for p in captured_prompts)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5: human-readable record formatting helper
+# ---------------------------------------------------------------------------
+
+from app.services.text_to_flux_service import _format_records_for_prompt
+
+
+def test_format_records_single_temperature_with_time():
+    out = _format_records_for_prompt([
+        {"time": "2026-05-15T10:00:00Z", "field": "temperature", "value": 22.3}
+    ])
+    assert "temperature: 22.3 °C" in out
+    assert "at 2026-05-15T10:00:00Z" in out
+
+
+def test_format_records_humidity_units():
+    out = _format_records_for_prompt([
+        {"time": None, "field": "humidity", "value": 58.0}
+    ])
+    assert "humidity: 58.0 %" in out
+    assert "at " not in out
+
+
+def test_format_records_pressure_units():
+    out = _format_records_for_prompt([
+        {"time": None, "field": "pressure", "value": 1013.2}
+    ])
+    assert "pressure: 1013.2 hPa" in out
+
+
+def test_format_records_dew_point_units():
+    out = _format_records_for_prompt([
+        {"time": None, "field": "dew_point", "value": 12.5}
+    ])
+    assert "dew_point: 12.5 °C" in out
+
+
+def test_format_records_multiple_lines():
+    out = _format_records_for_prompt([
+        {"time": None, "field": "temperature", "value": 22.0},
+        {"time": None, "field": "temperature", "value": 23.5},
+    ])
+    lines = [line for line in out.splitlines() if line.strip()]
+    assert len(lines) == 2
+
+
+def test_format_records_unknown_field_uses_no_unit():
+    out = _format_records_for_prompt([
+        {"time": None, "field": "mystery", "value": 7.0}
+    ])
+    # Should still produce a sensible line, just without a unit suffix.
+    assert "mystery: 7.0" in out
+    assert "°C" not in out
+
+
+def test_format_records_empty_list_returns_empty_string():
+    assert _format_records_for_prompt([]) == ""
