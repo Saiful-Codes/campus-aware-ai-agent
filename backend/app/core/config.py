@@ -21,7 +21,7 @@ class Settings:
     POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
     POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
 
-    INFLUXDB_URL = os.getenv("INFLUXDB_URL", "http://localhost:8086")
+    INFLUXDB_URL = os.getenv("INFLUXDB_URL", "http://localhost:18086")
     INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN", "")
     INFLUXDB_ORG = os.getenv("INFLUXDB_ORG", "")
     INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "")
