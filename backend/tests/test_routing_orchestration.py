@@ -125,3 +125,27 @@ def test_campus_map_routes_rag_specific():
 def test_benefits_of_green_spaces_routes_general_conceptual():
     result = classify_query_intent("What are the benefits of campus green spaces for student wellbeing?")
     assert result["intent"] == "general_conceptual"
+
+
+# --- Sprint 5: year-agnostic exact_current_info routing ---
+
+def test_calendar_2027_routes_exact_current_info():
+    result = classify_query_intent("Give me the exact link for 2027 academic calendar")
+    assert result["intent"] == "exact_current_info"
+
+
+def test_calendar_2030_routes_exact_current_info():
+    result = classify_query_intent("Where is the 2030 academic calendar?")
+    assert result["intent"] == "exact_current_info"
+
+
+def test_year_alone_with_fee_routes_exact_current_info():
+    result = classify_query_intent("What is the current fee for 2028?")
+    assert result["intent"] == "exact_current_info"
+
+
+def test_existing_2026_calendar_still_routes_exact_current_info():
+    # Regression: removing the literal "2026" keyword must not break
+    # queries that previously matched on it via other keywords.
+    result = classify_query_intent("Give me the exact link for 2026 academic calendar")
+    assert result["intent"] == "exact_current_info"
