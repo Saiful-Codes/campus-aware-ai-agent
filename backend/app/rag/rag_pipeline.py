@@ -23,16 +23,14 @@ client = genai.Client(api_key=api_key)
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
-# PostgreSQL connection
-conn = psycopg2.connect(
-    dbname=os.getenv("DB_NAME"),
-    user=os.getenv("DB_USER"),
-    password=os.getenv("DB_PASSWORD"),
-    host=os.getenv("DB_HOST"),
-    port=os.getenv("DB_PORT"),
-)
-
-cursor = conn.cursor()
+def _open_pg_connection():
+    return psycopg2.connect(
+        dbname=os.getenv("DB_NAME"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        host=os.getenv("DB_HOST"),
+        port=os.getenv("DB_PORT"),
+    )
 
 RAG_SIMILARITY_HIGH = 0.75
 RAG_SIMILARITY_MEDIUM = 0.62
@@ -49,39 +47,42 @@ def retrieve_with_scores(query: str, top_k: int = 5) -> List[Dict[str, float | s
 
     query_embedding = embed_model.encode(query).tolist()
 
+    conn = _open_pg_connection()
     try:
-        cursor.execute(
-            """
-            SELECT content, (embedding <-> %s::vector) AS distance
-            FROM documents
-            ORDER BY embedding <-> %s::vector
-            LIMIT %s;
-            """,
-            (query_embedding, query_embedding, top_k),
-        )
-
-        results = cursor.fetchall()
-        rows: List[Dict[str, float | str]] = []
-        for row in results:
-            content = row[0]
-            distance = float(row[1]) if row[1] is not None else 999.0
-            similarity = 1.0 / (1.0 + max(distance, 0.0))
-            rows.append(
-                {
-                    "content": content,
-                    "distance": distance,
-                    "similarity": similarity,
-                }
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT content, (embedding <-> %s::vector) AS distance
+                FROM documents
+                ORDER BY embedding <-> %s::vector
+                LIMIT %s;
+                """,
+                (query_embedding, query_embedding, top_k),
             )
 
-        print(f"Retrieved {len(rows)} relevant chunks from documents table.")
-
-        return rows
-
+            results = cursor.fetchall()
     except Exception as e:
-        conn.rollback()
         print(f"RAG retrieval error: {e}")
-        raise e
+        raise
+    finally:
+        conn.close()
+
+    rows: List[Dict[str, float | str]] = []
+    for row in results:
+        content = row[0]
+        distance = float(row[1]) if row[1] is not None else 999.0
+        similarity = 1.0 / (1.0 + max(distance, 0.0))
+        rows.append(
+            {
+                "content": content,
+                "distance": distance,
+                "similarity": similarity,
+            }
+        )
+
+    print(f"Retrieved {len(rows)} relevant chunks from documents table.")
+
+    return rows
 
 
 def build_prompt(query, context_chunks):
