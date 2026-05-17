@@ -70,10 +70,6 @@ def call_gemini_with_retry(
 
 
 def generate_response(query: str) -> Tuple[str, str]:
-    llm_workflow_start = time.time()
-    max_retries = 2
-    attempt = 0
-
     prompt = f"""
 You are Campus AI, a helpful campus assistant for La Trobe University.
 
@@ -87,48 +83,15 @@ User question:
 {query}
 """
 
-    while attempt <= max_retries:
-        attempt_start = time.time()
+    try:
+        text = call_gemini_with_retry(prompt, label="generate_response")
+    except GeminiCallError:
+        return "Sorry, the AI service is busy right now. Please try again in a moment.", "error"
 
-        try:
-            print(f"Using model: {MODEL_NAME}")
-            print(f"Starting Gemini call... Attempt {attempt + 1}")
+    if not text:
+        return "Sorry, I could not generate a response.", "error"
 
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=prompt,
-            )
-
-            attempt_end = time.time()
-            attempt_time = attempt_end - attempt_start
-            print(f"Attempt {attempt + 1} succeeded in {attempt_time:.2f} seconds")
-
-            total_llm_time = time.time() - llm_workflow_start
-            print(f"Total LLM workflow time: {total_llm_time:.2f} seconds")
-
-            if response.text:
-                return response.text.strip(), "success"
-
-            return "Sorry, I could not generate a response.", "error"
-
-        except Exception as e:
-            attempt_end = time.time()
-            attempt_time = attempt_end - attempt_start
-            print(f"Attempt {attempt + 1} failed after {attempt_time:.2f} seconds")
-            print(f"Error in generate_response: {e}")
-
-            error_text = str(e)
-
-            if "503" in error_text and attempt < max_retries:
-                wait_time = 2 * (attempt + 1)
-                print(f"503 error detected. Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
-                attempt += 1
-                continue
-
-            total_llm_time = time.time() - llm_workflow_start
-            print(f"Total LLM workflow time: {total_llm_time:.2f} seconds")
-            return "Sorry, the AI service is busy right now. Please try again in a moment.", "error"
+    return text, "success"
 
 
 def generate_sensor_response(query: str, sensor_data: dict) -> Tuple[str, str]:
@@ -137,10 +100,6 @@ def generate_sensor_response(query: str, sensor_data: dict) -> Tuple[str, str]:
             "No recent sensor data is available at the moment. Please try again shortly.",
             "sensor_no_data",
         )
-
-    llm_workflow_start = time.time()
-    max_retries = 2
-    attempt = 0
 
     temperature = sensor_data.get("temperature", "unknown")
     humidity = sensor_data.get("humidity", "unknown")
@@ -168,55 +127,18 @@ User question:
 {query}
 """
 
-    while attempt <= max_retries:
-        attempt_start = time.time()
+    try:
+        text = call_gemini_with_retry(prompt, label="generate_sensor_response")
+    except GeminiCallError:
+        return "Sorry, the AI service is busy right now. Please try again in a moment.", "error"
 
-        try:
-            print(f"Using model for sensor response: {MODEL_NAME}")
-            print(f"Starting Gemini sensor call... Attempt {attempt + 1}")
+    if not text:
+        return "Sorry, I could not generate a sensor-based response.", "error"
 
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=prompt,
-            )
-
-            attempt_end = time.time()
-            attempt_time = attempt_end - attempt_start
-            print(f"Sensor attempt {attempt + 1} succeeded in {attempt_time:.2f} seconds")
-
-            total_llm_time = time.time() - llm_workflow_start
-            print(f"Total sensor LLM workflow time: {total_llm_time:.2f} seconds")
-
-            if response.text:
-                return response.text.strip(), "sensor_response"
-
-            return "Sorry, I could not generate a sensor-based response.", "error"
-
-        except Exception as e:
-            attempt_end = time.time()
-            attempt_time = attempt_end - attempt_start
-            print(f"Sensor attempt {attempt + 1} failed after {attempt_time:.2f} seconds")
-            print(f"Error in generate_sensor_response: {e}")
-
-            error_text = str(e)
-
-            if "503" in error_text and attempt < max_retries:
-                wait_time = 2 * (attempt + 1)
-                print(f"503 error detected in sensor response. Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
-                attempt += 1
-                continue
-
-            total_llm_time = time.time() - llm_workflow_start
-            print(f"Total sensor LLM workflow time: {total_llm_time:.2f} seconds")
-            return "Sorry, the AI service is busy right now. Please try again in a moment.", "error"
+    return text, "sensor_response"
 
 
 def generate_hybrid_response(query: str, context_chunks: list[str]) -> Tuple[str, str]:
-    llm_workflow_start = time.time()
-    max_retries = 2
-    attempt = 0
-
     context = "\n\n".join(context_chunks[:4]) if context_chunks else ""
 
     prompt = f"""
@@ -237,45 +159,12 @@ User question:
 {query}
 """
 
-    while attempt <= max_retries:
-        attempt_start = time.time()
+    try:
+        text = call_gemini_with_retry(prompt, label="generate_hybrid_response")
+    except GeminiCallError:
+        return "Sorry, the AI service is busy right now. Please try again in a moment.", "error"
 
-        try:
-            print(f"Using model for hybrid response: {MODEL_NAME}")
-            print(f"Starting Gemini hybrid call... Attempt {attempt + 1}")
+    if not text:
+        return "Sorry, I could not generate a hybrid response.", "error"
 
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=prompt,
-            )
-
-            attempt_end = time.time()
-            attempt_time = attempt_end - attempt_start
-            print(f"Hybrid attempt {attempt + 1} succeeded in {attempt_time:.2f} seconds")
-
-            total_llm_time = time.time() - llm_workflow_start
-            print(f"Total hybrid LLM workflow time: {total_llm_time:.2f} seconds")
-
-            if response.text:
-                return response.text.strip(), "hybrid_response"
-
-            return "Sorry, I could not generate a hybrid response.", "error"
-
-        except Exception as e:
-            attempt_end = time.time()
-            attempt_time = attempt_end - attempt_start
-            print(f"Hybrid attempt {attempt + 1} failed after {attempt_time:.2f} seconds")
-            print(f"Error in generate_hybrid_response: {e}")
-
-            error_text = str(e)
-
-            if "503" in error_text and attempt < max_retries:
-                wait_time = 2 * (attempt + 1)
-                print(f"503 error detected in hybrid response. Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
-                attempt += 1
-                continue
-
-            total_llm_time = time.time() - llm_workflow_start
-            print(f"Total hybrid LLM workflow time: {total_llm_time:.2f} seconds")
-            return "Sorry, the AI service is busy right now. Please try again in a moment.", "error"
+    return text, "hybrid_response"
