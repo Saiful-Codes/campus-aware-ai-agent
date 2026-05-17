@@ -19,7 +19,7 @@ function LayoutContent() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider> {/* ✅ wrap auth FIRST */}
+    <AuthProvider>
       <AppSettingsProvider>
         <LayoutContent />
       </AppSettingsProvider>
