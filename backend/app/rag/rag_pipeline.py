@@ -3,36 +3,27 @@ import time
 import psycopg2
 from typing import Dict, List
 from sentence_transformers import SentenceTransformer
-from google import genai
 from dotenv import load_dotenv
+
+from app.services.llm_service import call_gemini_with_retry, GeminiCallError
 
 
 # Load environment variables
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../../.env"))
-
-# Get API key
-api_key = os.getenv("GEMINI_API_KEY")
-
-if not api_key:
-    raise ValueError("GEMINI_API_KEY not found. Check your .env file.")
-
-client = genai.Client(api_key=api_key)
 
 
 # Embedding model
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
-# PostgreSQL connection
-conn = psycopg2.connect(
-    dbname=os.getenv("DB_NAME"),
-    user=os.getenv("DB_USER"),
-    password=os.getenv("DB_PASSWORD"),
-    host=os.getenv("DB_HOST"),
-    port=os.getenv("DB_PORT"),
-)
-
-cursor = conn.cursor()
+def _open_pg_connection():
+    return psycopg2.connect(
+        dbname=os.getenv("DB_NAME"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        host=os.getenv("DB_HOST"),
+        port=os.getenv("DB_PORT"),
+    )
 
 RAG_SIMILARITY_HIGH = 0.75
 RAG_SIMILARITY_MEDIUM = 0.62
@@ -49,39 +40,42 @@ def retrieve_with_scores(query: str, top_k: int = 5) -> List[Dict[str, float | s
 
     query_embedding = embed_model.encode(query).tolist()
 
+    conn = _open_pg_connection()
     try:
-        cursor.execute(
-            """
-            SELECT content, (embedding <-> %s::vector) AS distance
-            FROM documents
-            ORDER BY embedding <-> %s::vector
-            LIMIT %s;
-            """,
-            (query_embedding, query_embedding, top_k),
-        )
-
-        results = cursor.fetchall()
-        rows: List[Dict[str, float | str]] = []
-        for row in results:
-            content = row[0]
-            distance = float(row[1]) if row[1] is not None else 999.0
-            similarity = 1.0 / (1.0 + max(distance, 0.0))
-            rows.append(
-                {
-                    "content": content,
-                    "distance": distance,
-                    "similarity": similarity,
-                }
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT content, (embedding <-> %s::vector) AS distance
+                FROM documents
+                ORDER BY embedding <-> %s::vector
+                LIMIT %s;
+                """,
+                (query_embedding, query_embedding, top_k),
             )
 
-        print(f"Retrieved {len(rows)} relevant chunks from documents table.")
-
-        return rows
-
+            results = cursor.fetchall()
     except Exception as e:
-        conn.rollback()
         print(f"RAG retrieval error: {e}")
-        raise e
+        raise
+    finally:
+        conn.close()
+
+    rows: List[Dict[str, float | str]] = []
+    for row in results:
+        content = row[0]
+        distance = float(row[1]) if row[1] is not None else 999.0
+        similarity = 1.0 / (1.0 + max(distance, 0.0))
+        rows.append(
+            {
+                "content": content,
+                "distance": distance,
+                "similarity": similarity,
+            }
+        )
+
+    print(f"Retrieved {len(rows)} relevant chunks from documents table.")
+
+    return rows
 
 
 def build_prompt(query, context_chunks):
@@ -156,15 +150,16 @@ def generate_answer_with_diagnostics(query: str, top_k: int = 5) -> Dict[str, ob
     prompt = build_prompt(query, chunks)
 
     print("Generating final RAG answer using Gemini...")
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-    )
+    try:
+        text = call_gemini_with_retry(prompt, label="rag_answer")
+    except GeminiCallError as e:
+        print(f"RAG Gemini call failed terminally: {e}")
+        text = ""
 
     total_time = time.time() - rag_start
     print(f"RAG Gemini response completed in {total_time:.2f} seconds.")
 
-    answer = response.text.strip() if response.text else "I don't have enough information to answer that."
+    answer = text if text else "I don't have enough information to answer that."
     return {
         "answer": answer,
         "context_chunks": chunks,
