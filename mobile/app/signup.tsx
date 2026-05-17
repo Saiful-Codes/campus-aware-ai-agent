@@ -3,13 +3,13 @@ import React, { useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { palette, getFontSize } from "../src/constants/theme";
 import { useAppSettings } from "../src/context/AppSettingsContext";
 import { SignupExtraUserData, useAuth } from "../src/context/AuthContext";
