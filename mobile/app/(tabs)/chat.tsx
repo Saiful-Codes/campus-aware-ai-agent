@@ -7,17 +7,21 @@ import {
   Alert,
   Animated,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import ChatBubble from "../../src/components/ChatBubble";
 import ChatSidebar, { ChatThread } from "../../src/components/ChatSidebar";
+import ProfileModal from "../../src/components/ProfileModal";
+import SettingsModal from "../../src/components/SettingsModal";
 import { getFontSize, palette } from "../../src/constants/theme";
 import { useAppSettings } from "../../src/context/AppSettingsContext";
 import { useAuth } from "../../src/context/AuthContext";
@@ -76,14 +80,24 @@ function threadPreview(messages: Message[]): string {
   return last.text.replace(/[#*`>\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, 50);
 }
 
+function detectQueryType(text: string): string {
+  const lower = text.toLowerCase();
+  if (/current|right now|live|temperature now|humidity now/.test(lower)) return "live_sensor";
+  if (/last week|yesterday|average|history|past|trend|previously/.test(lower)) return "sensor_history";
+  if (/facilities|rooms|campus|college|building|available at|located|where is/.test(lower)) return "campus_docs";
+  return "general";
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ChatScreen() {
   const params = useLocalSearchParams<{ chatId?: string }>();
   const { themeMode, largeText } = useAppSettings();
   const colors = palette[themeMode];
-  const { user, isGuest } = useAuth();
+  const { user, isGuest, logout } = useAuth();
   const isAuthenticatedUser = !!user?.uid && !isGuest;
+  const { width } = useWindowDimensions();
+  const isWideSidebar = Platform.OS === "web" && width >= 768;
 
   // ── Thread state
   const [threads, setThreads] = useState<ChatThread[]>([]);
@@ -98,13 +112,27 @@ export default function ChatScreen() {
   const [attachedFile, setAttachedFile] = useState<PickedDocument | null>(null);
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [threadAttachments, setThreadAttachments] = useState<Record<string, ThreadAttachment[]>>({});
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);     // controls hamburger visibility
+  const [sidebarRendered, setSidebarRendered] = useState(false); // keeps sidebar mounted during close animation
   const [retryMessage, setRetryMessage] = useState<string | null>(null);
+  const [detectedSourceType, setDetectedSourceType] = useState<string>("general");
+  const [profileModalVisible, setProfileModalVisible] = useState(false);
+  const [settingsModalVisible, setSettingsModalVisible] = useState(false);
 
   const listRef = useRef<FlatList<Message>>(null);
   const sidebarAnim = useRef(new Animated.Value(-280)).current;
+  const sidebarIntentRef = useRef(false); // true = open, false = closed; guards stale animation callbacks
 
   const activeMessages: Message[] = threadMessages[activeThreadId] ?? [];
+
+  // ── Computed user info for sidebar
+  const userInitial = isGuest
+    ? "G"
+    : ((user?.displayName?.charAt(0) || user?.email?.charAt(0) || "U").toUpperCase());
+  const userDisplayName = isGuest
+    ? "Guest"
+    : user?.displayName || user?.email?.split("@")[0] || "Campus User";
+  const userEmail = isGuest ? "Browsing as guest" : user?.email || "";
 
   const canSend = useMemo(
     () =>
@@ -269,7 +297,6 @@ export default function ChatScreen() {
         const id = await createChatThread(user.uid);
         setThreadMessages((prev) => ({ ...prev, [id]: [] }));
         setActiveThreadId(id);
-        setSidebarOpen(false);
         closeSidebar();
         router.replace({ pathname: "/chat", params: { chatId: id } });
         return id;
@@ -289,7 +316,6 @@ export default function ChatScreen() {
     setThreads(updatedThreads);
     setThreadMessages(updatedMessages);
     setActiveThreadId(id);
-    setSidebarOpen(false);
     closeSidebar();
     persist(updatedThreads, updatedMessages);
     persistActiveId(id);
@@ -389,13 +415,7 @@ export default function ChatScreen() {
       }
 
       const updatedThreads = threads.map((t) =>
-        t.id === id
-          ? {
-            ...t,
-            name: nextName,
-            updatedAt: Date.now(),
-          }
-          : t
+        t.id === id ? { ...t, name: nextName, updatedAt: Date.now() } : t
       );
 
       setThreads(updatedThreads);
@@ -407,22 +427,84 @@ export default function ChatScreen() {
   // ── Sidebar animation ─────────────────────────────────────────────────────
 
   const openSidebar = () => {
+    Keyboard.dismiss(); // always close keyboard so it never obscures the sidebar
+    sidebarIntentRef.current = true;
     setSidebarOpen(true);
-    Animated.spring(sidebarAnim, {
-      toValue: 0,
-      useNativeDriver: true,
-      tension: 80,
-      friction: 12,
-    }).start();
+    setSidebarRendered(true);
+    if (!isWideSidebar) {
+      Animated.spring(sidebarAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 80,
+        friction: 12,
+      }).start();
+    }
   };
 
   const closeSidebar = () => {
+    sidebarIntentRef.current = false;
+    setSidebarOpen(false); // hamburger reappears immediately
+    if (isWideSidebar) {
+      setSidebarRendered(false);
+      return;
+    }
     Animated.spring(sidebarAnim, {
       toValue: -280,
       useNativeDriver: true,
       tension: 80,
       friction: 12,
-    }).start(() => setSidebarOpen(false));
+    }).start(({ finished }) => {
+      // Only unmount if this callback belongs to the most recent close (not a stale one)
+      if (finished && !sidebarIntentRef.current) {
+        setSidebarRendered(false);
+      }
+    });
+  };
+
+  // ── Modal handlers ────────────────────────────────────────────────────────
+
+  const handleOpenProfile = () => {
+    setProfileModalVisible(true);
+  };
+
+  const handleOpenSettings = () => {
+    setSettingsModalVisible(true);
+  };
+
+  const handleLogout = async () => {
+    closeSidebar();
+    if (Platform.OS === "web") {
+      // @ts-ignore
+      const confirmed = window.confirm("Are you sure you want to log out?");
+      if (!confirmed) return;
+      try {
+        await logout();
+        router.replace("/login");
+      } catch (e: any) {
+        Alert.alert("Error", e?.message || "Logout failed");
+      }
+      return;
+    }
+    Alert.alert("Log out", "Are you sure you want to log out?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Log out",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await logout();
+            router.replace("/login");
+          } catch (e: any) {
+            Alert.alert("Error", e?.message || "Logout failed");
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleOpenThread = (chatId: string) => {
+    setProfileModalVisible(false);
+    selectThread(chatId);
   };
 
   // ── Message helpers ───────────────────────────────────────────────────────
@@ -494,7 +576,6 @@ export default function ChatScreen() {
       text: textToSend || `Uploaded document: ${attachedFile?.name}`,
     };
 
-    // Auto-name the thread from first message
     const currentMessages = threadMessages[targetThreadId] ?? [];
     const isFirstMessage = currentMessages.filter((m) => m.role === "user").length === 0;
     const currentThread = threads.find((t) => t.id === targetThreadId);
@@ -502,10 +583,10 @@ export default function ChatScreen() {
 
     updateMessages(targetThreadId, (prev) => [...prev, userMessage]);
     setInput("");
+    setDetectedSourceType(detectQueryType(textToSend));
     setIsLoading(true);
     scrollToBottom();
 
-    // Placeholder
     const assistantId = `${Date.now()}-assistant`;
     updateMessages(targetThreadId, (prev) => [
       ...prev,
@@ -536,7 +617,6 @@ export default function ChatScreen() {
       let isRagUsed = false;
       let backendStatus: string | undefined;
 
-      // Try RAG first
       try {
         const ragRes = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/rag/chat`, {
           method: "POST",
@@ -572,7 +652,6 @@ export default function ChatScreen() {
         // RAG failed — fall through to standard chat
       }
 
-      // Fallback
       if (!responseText) {
         const response = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/chat`, {
           method: "POST",
@@ -592,7 +671,7 @@ export default function ChatScreen() {
           data.response ?? data.answer ?? data.message ?? "Sorry, I could not generate a response.";
       }
 
-      const finalText = isRagUsed ? `📄 *From campus documents*\n\n${responseText}` : responseText;
+      const finalText = responseText;
 
       updateMessages(targetThreadId, (prev) =>
         prev.map((m) =>
@@ -623,20 +702,17 @@ export default function ChatScreen() {
         }
       }
 
-      // Update thread metadata
-      const nameForThread = normalizedTitle;
       setThreads((prev) => {
         const updated = prev.map((t) =>
           t.id === targetThreadId
             ? {
               ...t,
-              name: nameForThread ?? t.name,
+              name: normalizedTitle ?? t.name,
               preview: finalText.replace(/[#*`>\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, 50),
               updatedAt: Date.now(),
             }
             : t
         );
-        // Re-sort: most recently updated first
         return [...updated].sort((a, b) => b.updatedAt - a.updatedAt);
       });
 
@@ -664,7 +740,6 @@ export default function ChatScreen() {
       const msgs = prev[activeThreadId] ?? [];
       const updated = msgs.map((m) => (m.id === msgId ? { ...m, streaming: false } : m));
       const newState = { ...prev, [activeThreadId]: updated };
-      // Persist after stream completes
       persist(
         threads.map((t) =>
           t.id === activeThreadId
@@ -721,15 +796,10 @@ export default function ChatScreen() {
 
       const uploadResponse = await fetch(
         `${process.env.EXPO_PUBLIC_API_BASE_URL}/thread-documents/upload`,
-        {
-          method: "POST",
-          body: form,
-        }
+        { method: "POST", body: form }
       );
 
-      if (!uploadResponse.ok) {
-        throw new Error(`HTTP ${uploadResponse.status}`);
-      }
+      if (!uploadResponse.ok) throw new Error(`HTTP ${uploadResponse.status}`);
 
       await fetchThreadAttachments(targetThreadId);
       Alert.alert("Document added", `${nextPicked.name} is now linked to this chat thread.`);
@@ -744,7 +814,169 @@ export default function ChatScreen() {
   const currentThreadName =
     threads.find((t) => t.id === activeThreadId)?.name ?? "Campus AI";
 
+  // ── Shared sidebar props ──────────────────────────────────────────────────
+
+  const sidebarProps = {
+    threads,
+    activeThreadId,
+    onSelectThread: selectThread,
+    onNewThread: () => createThread(),
+    onDeleteThread: deleteThread,
+    onRenameThread: renameThread,
+    onClose: closeSidebar,
+    isCreatingThread,
+    isSwitchingThread,
+    userInitial,
+    userDisplayName,
+    onOpenProfile: handleOpenProfile,
+    onOpenSettings: handleOpenSettings,
+    onLogout: handleLogout,
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────
+
+  const chatContent = (
+    <View style={[styles.chatArea, isWideSidebar && styles.chatAreaWide]}>
+      {/* ── Header ── */}
+      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        {!sidebarOpen && (
+          <Pressable
+            onPress={openSidebar}
+            style={[styles.iconBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
+          >
+            <Menu color={colors.text} size={20} />
+          </Pressable>
+        )}
+
+        <Text
+          style={[styles.headerTitle, { color: colors.text, fontSize: getFontSize(14, largeText) }]}
+          numberOfLines={1}
+        >
+          {currentThreadName}
+        </Text>
+      </View>
+
+      {isSwitchingThread && (
+        <Text style={[styles.switchingText, { color: colors.muted, fontSize: getFontSize(12, largeText) }]}>
+          Loading chat...
+        </Text>
+      )}
+
+      {(threadAttachments[activeThreadId] ?? []).length > 0 && (
+        <View style={styles.documentsList}>
+          <Text style={[styles.documentsTitle, { color: colors.muted, fontSize: getFontSize(12, largeText) }]}>
+            Thread documents
+          </Text>
+          <FlatList
+            horizontal
+            data={threadAttachments[activeThreadId] ?? []}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <View style={[styles.documentChip, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+                <Text
+                  numberOfLines={1}
+                  style={[styles.documentChipText, { color: colors.text, fontSize: getFontSize(12, largeText) }]}
+                >
+                  {item.fileName}
+                </Text>
+              </View>
+            )}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.documentsScroll}
+          />
+        </View>
+      )}
+
+      {/* ── Empty state ── */}
+      {activeMessages.length === 0 && (
+        <View style={styles.emptyState}>
+          <Text style={[styles.emptyTitle, { color: colors.primary, fontSize: getFontSize(22, largeText) }]}>
+            Campus AI
+          </Text>
+          <Text style={[styles.emptySubtitle, { color: colors.muted, fontSize: getFontSize(13, largeText) }]}>
+            Ask me about rooms, campus information, or upload a PDF document.
+          </Text>
+        </View>
+      )}
+
+      {/* ── Message list ── */}
+      <FlatList
+        ref={listRef}
+        data={activeMessages}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <ChatBubble
+            role={item.role}
+            text={item.text}
+            streaming={item.streaming}
+            onStreamComplete={() => handleStreamComplete(item.id)}
+            sourceType={detectedSourceType}
+          />
+        )}
+        contentContainerStyle={styles.chatList}
+        showsVerticalScrollIndicator={false}
+        onContentSizeChange={scrollToBottom}
+      />
+
+      {/* ── Retry banner ── */}
+      {retryMessage && !isLoading && (
+        <Pressable
+          onPress={() => handleSend(retryMessage)}
+          style={[styles.retryBanner, { backgroundColor: colors.primarySoft, borderColor: colors.primary }]}
+        >
+          <RefreshCw color={colors.primary} size={14} />
+          <Text style={[styles.retryText, { color: colors.primary, fontSize: getFontSize(13, largeText) }]}>
+            Tap to retry
+          </Text>
+        </Pressable>
+      )}
+
+      {/* ── Attachment chip ── */}
+      {attachedFile && (
+        <View style={[styles.attachmentChip, { backgroundColor: colors.primarySoft, borderColor: colors.border }]}>
+          <Text
+            style={[styles.attachmentText, { color: colors.text, fontSize: getFontSize(13, largeText) }]}
+            numberOfLines={1}
+          >
+            {attachedFile.name}
+          </Text>
+          <Pressable onPress={() => setAttachedFile(null)} hitSlop={8}>
+            <X color={colors.text} size={16} />
+          </Pressable>
+        </View>
+      )}
+
+      {/* ── Input bar ── */}
+      <View style={[styles.inputContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <Pressable
+          onPress={handlePickDocument}
+          disabled={isUploadingAttachment}
+          style={[styles.iconButton, { backgroundColor: colors.surface2, borderColor: colors.border }]}
+        >
+          <Plus color={colors.text} size={18} />
+        </Pressable>
+
+        <TextInput
+          value={input}
+          onChangeText={setInput}
+          placeholder="Ask a question..."
+          placeholderTextColor={colors.muted}
+          style={[styles.input, { color: colors.text, fontSize: getFontSize(15, largeText) }]}
+          multiline
+          onSubmitEditing={() => handleSend()}
+          submitBehavior="newline"
+        />
+
+        <Pressable
+          onPress={() => handleSend()}
+          disabled={!canSend}
+          style={[styles.sendButton, { backgroundColor: colors.primary, opacity: canSend ? 1 : 0.4 }]}
+        >
+          <Send color={colors.white} size={18} />
+        </Pressable>
+      </View>
+    </View>
+  );
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
@@ -752,197 +984,89 @@ export default function ChatScreen() {
         style={styles.safe}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <View style={styles.container}>
-
-          {/* ── Header ── */}
-          <View style={[styles.header, { borderBottomColor: colors.border }]}>
-            <Pressable
-              onPress={openSidebar}
-              style={[styles.iconBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
-            >
-              <Menu color={colors.text} size={20} />
-            </Pressable>
-
-            <Text
-              style={[styles.headerTitle, { color: colors.text, fontSize: getFontSize(14, largeText) }]}
-              numberOfLines={1}
-            >
-              {currentThreadName}
-            </Text>
-          </View>
-
-          {isSwitchingThread && (
-            <Text style={[styles.switchingText, { color: colors.muted, fontSize: getFontSize(12, largeText) }]}>
-              Loading chat...
-            </Text>
-          )}
-
-          {(threadAttachments[activeThreadId] ?? []).length > 0 && (
-            <View style={styles.documentsList}>
-              <Text
-                style={[
-                  styles.documentsTitle,
-                  { color: colors.muted, fontSize: getFontSize(12, largeText) },
-                ]}
-              >
-                Thread documents
-              </Text>
-              <FlatList
-                horizontal
-                data={threadAttachments[activeThreadId] ?? []}
-                keyExtractor={(item) => item.id}
-                renderItem={({ item }) => (
-                  <View
-                    style={[
-                      styles.documentChip,
-                      { borderColor: colors.border, backgroundColor: colors.surface },
-                    ]}
-                  >
-                    <Text
-                      numberOfLines={1}
-                      style={[
-                        styles.documentChipText,
-                        { color: colors.text, fontSize: getFontSize(12, largeText) },
-                      ]}
-                    >
-                      {item.fileName}
-                    </Text>
-                  </View>
-                )}
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.documentsScroll}
-              />
-            </View>
-          )}
-
-          {/* ── Empty state ── */}
-          {activeMessages.length === 0 && (
-            <View style={styles.emptyState}>
-              <Text style={[styles.emptyTitle, { color: colors.primary, fontSize: getFontSize(22, largeText) }]}>
-                Campus AI
-              </Text>
-              <Text style={[styles.emptySubtitle, { color: colors.muted, fontSize: getFontSize(13, largeText) }]}>
-                Ask me about rooms, campus information, or upload a PDF document.
-              </Text>
-            </View>
-          )}
-
-          {/* ── Message list ── */}
-          <FlatList
-            ref={listRef}
-            data={activeMessages}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <ChatBubble
-                role={item.role}
-                text={item.text}
-                streaming={item.streaming}
-                onStreamComplete={() => handleStreamComplete(item.id)}
+        {isWideSidebar ? (
+          // Wide web: persistent sidebar toggled by hamburger
+          <View style={styles.wideLayout}>
+            {sidebarOpen && (
+              <ChatSidebar
+                {...sidebarProps}
+                visible
+                translateX={sidebarAnim}
+                persistentMode
               />
             )}
-            contentContainerStyle={styles.chatList}
-            showsVerticalScrollIndicator={false}
-            onContentSizeChange={scrollToBottom}
-          />
-
-          {/* ── Retry banner ── */}
-          {retryMessage && !isLoading && (
-            <Pressable
-              onPress={() => handleSend(retryMessage)}
-              style={[styles.retryBanner, { backgroundColor: colors.primarySoft, borderColor: colors.primary }]}
-            >
-              <RefreshCw color={colors.primary} size={14} />
-              <Text style={[styles.retryText, { color: colors.primary, fontSize: getFontSize(13, largeText) }]}>
-                Tap to retry
-              </Text>
-            </Pressable>
-          )}
-
-          {/* ── Attachment chip ── */}
-          {attachedFile && (
-            <View style={[styles.attachmentChip, { backgroundColor: colors.primarySoft, borderColor: colors.border }]}>
-              <Text
-                style={[styles.attachmentText, { color: colors.text, fontSize: getFontSize(13, largeText) }]}
-                numberOfLines={1}
-              >
-                {attachedFile.name}
-              </Text>
-              <Pressable onPress={() => setAttachedFile(null)} hitSlop={8}>
-                <X color={colors.text} size={16} />
-              </Pressable>
-            </View>
-          )}
-
-          {/* ── Input bar ── */}
-          <View style={[styles.inputContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Pressable
-              onPress={handlePickDocument}
-              disabled={isUploadingAttachment}
-              style={[styles.iconButton, { backgroundColor: colors.surface2, borderColor: colors.border }]}
-            >
-              <Plus color={colors.text} size={18} />
-            </Pressable>
-
-            <TextInput
-              value={input}
-              onChangeText={setInput}
-              placeholder="Ask a question..."
-              placeholderTextColor={colors.muted}
-              style={[styles.input, { color: colors.text, fontSize: getFontSize(15, largeText) }]}
-              multiline
-              onSubmitEditing={() => handleSend()}
-              submitBehavior="newline"
-            />
-
-            <Pressable
-              onPress={() => handleSend()}
-              disabled={!canSend}
-              style={[styles.sendButton, { backgroundColor: colors.primary, opacity: canSend ? 1 : 0.4 }]}
-            >
-              <Send color={colors.white} size={18} />
-            </Pressable>
+            {chatContent}
           </View>
-        </View>
-
-        {/* ── Sidebar ── */}
-        <ChatSidebar
-          visible={sidebarOpen}
-          threads={threads}
-          activeThreadId={activeThreadId}
-          onSelectThread={selectThread}
-          onNewThread={() => {
-            createThread();
-          }}
-          onDeleteThread={deleteThread}
-          onRenameThread={renameThread}
-          onClose={closeSidebar}
-          translateX={sidebarAnim}
-          isCreatingThread={isCreatingThread}
-          isSwitchingThread={isSwitchingThread}
-        />
+        ) : (
+          // Narrow / native: chat fills full width, overlay sidebar is outside KAV
+          <View style={styles.safe}>
+            {chatContent}
+          </View>
+        )}
       </KeyboardAvoidingView>
+
+      {/* Overlay sidebar lives outside KeyboardAvoidingView so the keyboard never clips it */}
+      {!isWideSidebar && (
+        <ChatSidebar
+          {...sidebarProps}
+          visible={sidebarRendered}
+          translateX={sidebarAnim}
+          persistentMode={false}
+        />
+      )}
+
+      {/* ── Modals ── */}
+      <ProfileModal
+        visible={profileModalVisible}
+        onClose={() => setProfileModalVisible(false)}
+        onOpenThread={handleOpenThread}
+        onDeleteThread={deleteThread}
+        threads={threads}
+        userInitial={userInitial}
+        userDisplayName={userDisplayName}
+        userEmail={userEmail}
+        isGuest={isGuest}
+      />
+      <SettingsModal
+        visible={settingsModalVisible}
+        onClose={() => setSettingsModalVisible(false)}
+      />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safe: { flex: 1 },
-  container: {
+  wideLayout: {
+    flex: 1,
+    flexDirection: "row",
+  },
+  chatArea: {
     flex: 1,
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 12,
   },
+  chatAreaWide: {
+    // No extra styles needed — flex: 1 handles it
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     marginBottom: 8,
     paddingBottom: 10,
     borderBottomWidth: 1,
     zIndex: 20,
   },
-  headerTitle: { flex: 1, fontWeight: "700", textAlign: "left", marginLeft: 10 },
+  headerTitle: {
+    flex: 1,
+    fontWeight: "700",
+    textAlign: "left",
+    marginLeft: 10,
+  },
+  headerTitleWide: {
+    marginLeft: 0,
+  },
   iconBtn: {
     width: 40,
     height: 40,
@@ -951,25 +1075,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderWidth: 1,
   },
-  menuWrapper: { position: "relative", zIndex: 30 },
-  menuDropdown: {
-    position: "absolute",
-    top: 48,
-    right: 0,
-    width: 190,
-    borderRadius: 14,
-    borderWidth: 1,
-    paddingVertical: 6,
-    zIndex: 999,
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
-  menuItem: { paddingHorizontal: 14, paddingVertical: 11 },
-  menuText: { fontWeight: "500" },
-  menuDivider: { height: 1, marginVertical: 4, marginHorizontal: 10 },
   emptyState: {
     flex: 0,
     alignItems: "flex-start",
@@ -985,18 +1090,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     fontWeight: "500",
   },
-  documentsList: {
-    marginBottom: 8,
-  },
+  documentsList: { marginBottom: 8 },
   documentsTitle: {
     fontWeight: "600",
     marginBottom: 6,
     paddingHorizontal: 2,
   },
-  documentsScroll: {
-    gap: 8,
-    paddingRight: 8,
-  },
+  documentsScroll: { gap: 8, paddingRight: 8 },
   documentChip: {
     borderWidth: 1,
     borderRadius: 999,
@@ -1004,9 +1104,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     maxWidth: 200,
   },
-  documentChipText: {
-    fontWeight: "600",
-  },
+  documentChipText: { fontWeight: "600" },
   chatList: {
     paddingTop: 8,
     paddingBottom: 12,
