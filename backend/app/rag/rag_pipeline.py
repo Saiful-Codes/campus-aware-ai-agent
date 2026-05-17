@@ -3,20 +3,13 @@ import time
 import psycopg2
 from typing import Dict, List
 from sentence_transformers import SentenceTransformer
-from google import genai
 from dotenv import load_dotenv
+
+from app.services.llm_service import call_gemini_with_retry, GeminiCallError
 
 
 # Load environment variables
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "../../../.env"))
-
-# Get API key
-api_key = os.getenv("GEMINI_API_KEY")
-
-if not api_key:
-    raise ValueError("GEMINI_API_KEY not found. Check your .env file.")
-
-client = genai.Client(api_key=api_key)
 
 
 # Embedding model
@@ -157,15 +150,16 @@ def generate_answer_with_diagnostics(query: str, top_k: int = 5) -> Dict[str, ob
     prompt = build_prompt(query, chunks)
 
     print("Generating final RAG answer using Gemini...")
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-    )
+    try:
+        text = call_gemini_with_retry(prompt, label="rag_answer")
+    except GeminiCallError as e:
+        print(f"RAG Gemini call failed terminally: {e}")
+        text = ""
 
     total_time = time.time() - rag_start
     print(f"RAG Gemini response completed in {total_time:.2f} seconds.")
 
-    answer = response.text.strip() if response.text else "I don't have enough information to answer that."
+    answer = text if text else "I don't have enough information to answer that."
     return {
         "answer": answer,
         "context_chunks": chunks,
