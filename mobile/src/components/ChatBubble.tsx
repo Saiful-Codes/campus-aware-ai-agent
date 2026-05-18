@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Animated, StyleSheet, Text, View } from "react-native";
 import { getFontSize, palette } from "../constants/theme";
 import { useAppSettings } from "../context/AppSettingsContext";
+import LoadingLabel from "./LoadingLabel";
 import MarkdownRenderer from "./MarkdownRenderer";
 
 type Props = {
@@ -9,6 +10,7 @@ type Props = {
   text: string;
   streaming?: boolean;
   onStreamComplete?: () => void;
+  sourceType?: string;
 };
 
 const CHAR_INTERVAL_MS = 8;
@@ -81,6 +83,7 @@ export default function ChatBubble({
   text,
   streaming = false,
   onStreamComplete,
+  sourceType,
 }: Props) {
   const { themeMode, largeText } = useAppSettings();
   const colors = palette[themeMode];
@@ -123,7 +126,10 @@ export default function ChatBubble({
             },
           ]}
         >
-          <ClaudeSpinner color={colors.primary} />
+          <View style={styles.thinkingRow}>
+            <ClaudeSpinner color={colors.primary} />
+            <LoadingLabel sourceType={sourceType} />
+          </View>
         </View>
       </View>
     );
@@ -194,12 +200,17 @@ const styles = StyleSheet.create({
   assistantRow: { justifyContent: "flex-start" },
 
   thinkingPill: {
-    width: 52,
+    paddingHorizontal: 16,
     height: 44,
     borderRadius: 22,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
+  },
+  thinkingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
 
   avatar: {

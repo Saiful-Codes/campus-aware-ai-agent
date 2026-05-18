@@ -3,11 +3,11 @@ import React from "react";
 import {
   Image,
   Pressable,
-  SafeAreaView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { getFontSize, palette } from "../../src/constants/theme";
 import { useAppSettings } from "../../src/context/AppSettingsContext";
 import { useAuth } from "../../src/context/AuthContext";
@@ -91,6 +91,10 @@ export default function HomeScreen() {
           </Pressable>
 
           <Pressable
+            style={({ pressed }) => [
+              styles.outlineButton,
+              { borderColor: colors.primary, backgroundColor: colors.card, opacity: pressed ? 0.7 : 1 },
+            ]}
             onPress={() => {
               continueAsGuest();
               router.replace("/chat");
@@ -98,10 +102,10 @@ export default function HomeScreen() {
           >
             <Text
               style={[
-                styles.guestText,
+                styles.outlineButtonText,
                 {
-                  color: colors.muted,
-                  fontSize: getFontSize(14, largeText),
+                  color: colors.primary,
+                  fontSize: getFontSize(16, largeText),
                 },
               ]}
             >
@@ -166,10 +170,5 @@ const styles = StyleSheet.create({
   },
   outlineButtonText: {
     fontWeight: "800",
-  },
-  guestText: {
-    textAlign: "center",
-    marginTop: 6,
-    fontWeight: "600",
   },
 });

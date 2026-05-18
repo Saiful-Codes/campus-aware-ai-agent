@@ -1,6 +1,8 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, setPersistence, browserSessionPersistence } from "firebase/auth";
+import { initializeAuth, getAuth, getReactNativePersistence, browserLocalPersistence } from "firebase/auth";
+import ReactNativeAsyncStorage from "@react-native-async-storage/async-storage";
 import { getFirestore } from "firebase/firestore";
+import { Platform } from "react-native";
 
 const firebaseConfig = {
   apiKey: "AIzaSyClGXJOVV5Cwu-vZbs7ZWpqbeT-28MM00c",
@@ -11,14 +13,15 @@ const firebaseConfig = {
   appId: "1:316968821683:web:238fd95320e2d1937ba1c6"
 };
 
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+const isFirstInit = getApps().length === 0;
+const app = isFirstInit ? initializeApp(firebaseConfig) : getApp();
 
-export const auth = getAuth(app);
+export const auth = isFirstInit
+  ? initializeAuth(app, {
+      persistence: Platform.OS === "web"
+        ? browserLocalPersistence
+        : getReactNativePersistence(ReactNativeAsyncStorage),
+    })
+  : getAuth(app);
 
-// Ensure session is not restored after logout on web
-if (typeof window !== "undefined") {
-  setPersistence(auth, browserSessionPersistence).catch((e) => {
-    console.log("[firebase] setPersistence error:", e);
-  });
-}
 export const db = getFirestore(app);

@@ -4,19 +4,19 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { palette, getFontSize } from "../src/constants/theme";
 import { useAppSettings } from "../src/context/AppSettingsContext";
 import { useAuth } from "../src/context/AuthContext";
 
 export default function LoginScreen() {
   const { themeMode, largeText } = useAppSettings();
-  const { login, continueAsGuest } = useAuth();
+  const { login } = useAuth();
   const colors = palette[themeMode];
 
   const [email, setEmail] = useState("");
@@ -117,21 +117,6 @@ export default function LoginScreen() {
             </Text>
           </Pressable>
 
-          <Pressable
-            onPress={() => {
-              continueAsGuest();
-              router.replace("/chat");
-            }}
-          >
-            <Text
-              style={[
-                styles.link,
-                { color: colors.muted, fontSize: getFontSize(14, largeText) },
-              ]}
-            >
-              Continue as Guest
-            </Text>
-          </Pressable>
         </View>
       </View>
     </SafeAreaView>
