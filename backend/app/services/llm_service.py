@@ -89,7 +89,11 @@ User question:
         return "Sorry, the AI service is busy right now. Please try again in a moment.", "error"
 
     if not text:
-        return "Sorry, I could not generate a response.", "error"
+        return (
+            "I couldn't generate a reliable answer for that question. "
+            "Please try rephrasing or simplifying your request.",
+            "error",
+        )
 
     return text, "success"
 
@@ -133,7 +137,11 @@ User question:
         return "Sorry, the AI service is busy right now. Please try again in a moment.", "error"
 
     if not text:
-        return "Sorry, I could not generate a sensor-based response.", "error"
+        return (
+            "I couldn't generate a reliable answer for that question. "
+            "Please try rephrasing or simplifying your request.",
+            "error",
+        )
 
     return text, "sensor_response"
 
@@ -165,6 +173,10 @@ User question:
         return "Sorry, the AI service is busy right now. Please try again in a moment.", "error"
 
     if not text:
-        return "Sorry, I could not generate a hybrid response.", "error"
+        return (
+            "I couldn't generate a reliable answer for that question. "
+            "Please try rephrasing or simplifying your request.",
+            "error",
+        )
 
     return text, "hybrid_response"

@@ -165,10 +165,43 @@ def get_time_range_info(user_question: str) -> dict:
     return {"flux_range": "start: -30d", "label": "the last 30 days"}
 
 
-def _build_no_data_message(time_label: str) -> str:
+_FIELD_HUMAN_LABEL = {
+    "temperature": "temperature",
+    "humidity": "humidity",
+    "pressure": "pressure",
+    "dew_point": "dew point",
+}
+
+_FIELD_KEYWORD_TO_FIELD = {
+    "temperature": "temperature",
+    "humidity": "humidity",
+    "pressure": "pressure",
+    "dew point": "dew_point",
+}
+
+
+def _detect_sensor_field(question: str) -> str | None:
+    """Return the snake_case sensor field name if exactly one is mentioned.
+
+    Returns None for zero matches or multiple matches.
+    """
+    q = (question or "").lower()
+    matched = {field for keyword, field in _FIELD_KEYWORD_TO_FIELD.items() if keyword in q}
+    if len(matched) == 1:
+        return next(iter(matched))
+    return None
+
+
+def _build_no_data_message(time_label: str, field_label: str | None = None) -> str:
+    if field_label is None:
+        return (
+            f"No matching sensor data was found for {time_label}. "
+            "The database may not contain readings for that time range."
+        )
+    human = _FIELD_HUMAN_LABEL.get(field_label, field_label)
     return (
-        f"No matching sensor data was found for {time_label}. "
-        "The database may not contain readings for that time range."
+        f"No {human} readings were found for {time_label}. "
+        f"The database may not contain {human} data for that period."
     )
 
 
@@ -426,8 +459,9 @@ def answer_sensor_flux_question(user_question: str):
     query_result = run_flux_query(flux_query)
 
     if not query_result:
+        field_label = _detect_sensor_field(user_question)
         return {
-            "answer": _build_no_data_message(time_info["label"]),
+            "answer": _build_no_data_message(time_info["label"], field_label=field_label),
             "status": "text_to_flux_no_data",
             "flux": flux_query,
             "data": [],

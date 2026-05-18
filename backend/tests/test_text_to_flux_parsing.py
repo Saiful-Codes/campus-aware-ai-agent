@@ -385,3 +385,56 @@ def test_format_records_unknown_field_uses_no_unit():
 
 def test_format_records_empty_list_returns_empty_string():
     assert _format_records_for_prompt([]) == ""
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5 Batch C: field-aware no-data messaging (#23)
+# ---------------------------------------------------------------------------
+
+from app.services.text_to_flux_service import _detect_sensor_field
+
+
+def test_detect_sensor_field_temperature():
+    assert _detect_sensor_field("What was the temperature yesterday?") == "temperature"
+
+
+def test_detect_sensor_field_humidity():
+    assert _detect_sensor_field("Show humidity readings") == "humidity"
+
+
+def test_detect_sensor_field_pressure():
+    assert _detect_sensor_field("What is the average pressure?") == "pressure"
+
+
+def test_detect_sensor_field_dew_point():
+    assert _detect_sensor_field("Dew point trend over last week") == "dew_point"
+
+
+def test_detect_sensor_field_returns_none_when_no_field_mentioned():
+    assert _detect_sensor_field("How was the weather?") is None
+
+
+def test_detect_sensor_field_returns_none_when_multiple_fields_mentioned():
+    assert _detect_sensor_field("Compare temperature and humidity") is None
+
+
+def test_no_data_message_generic_when_field_label_is_none():
+    # Regression: generic message remains byte-identical for the no-field branch.
+    msg = _build_no_data_message("this week")
+    assert msg == (
+        "No matching sensor data was found for this week. "
+        "The database may not contain readings for that time range."
+    )
+
+
+def test_no_data_message_field_aware_temperature():
+    msg = _build_no_data_message("yesterday", field_label="temperature")
+    assert "temperature" in msg
+    assert "yesterday" in msg
+
+
+def test_no_data_message_field_aware_dew_point_uses_human_label():
+    msg = _build_no_data_message("April 2026", field_label="dew_point")
+    # dew_point should render as "dew point" in user-facing text.
+    assert "dew point" in msg
+    assert "dew_point" not in msg
