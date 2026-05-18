@@ -1,10 +1,10 @@
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
-    query: str
+    query: str = Field(..., max_length=2000)
     debug: bool = False
 
 

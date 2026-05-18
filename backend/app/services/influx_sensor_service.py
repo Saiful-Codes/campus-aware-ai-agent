@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
 
+from app.services._sensor_utils import safe_float
+
 load_dotenv()
 
 INFLUX_URL = os.getenv("INFLUXDB_URL")
@@ -27,31 +29,18 @@ def fetch_latest_feed():
     return feeds[-1]
 
 
-def safe_float(value):
-    if value is None or value == "":
-        return None
+def _build_sensor_point(feed: dict):
+    """Build the InfluxDB Point for a single ThingSpeak feed.
 
-    try:
-        return float(value)
-    except ValueError:
-        return None
+    The entry_id tag is omitted entirely when the value is None or missing,
+    instead of writing the literal string "None" as a tag value.
+    """
+    entry_id = feed.get("entry_id")
 
-
-def write_feed_to_influx(feed: dict):
-    client = InfluxDBClient(
-        url=INFLUX_URL,
-        token=INFLUX_TOKEN,
-        org=INFLUX_ORG,
-    )
-
-    write_api = client.write_api(write_options=SYNCHRONOUS)
-
-    point = (
-        Point("sensor_readings")
-        .tag("source", "live_sensor_api")
-        .tag("entry_id", str(feed.get("entry_id")))
-        .time(feed.get("created_at"), WritePrecision.NS)
-    )
+    point = Point("sensor_readings").tag("source", "live_sensor_api")
+    if entry_id is not None:
+        point = point.tag("entry_id", str(entry_id))
+    point = point.time(feed.get("created_at"), WritePrecision.NS)
 
     fields = {
         "temperature": safe_float(feed.get("field1")),
@@ -64,6 +53,20 @@ def write_feed_to_influx(feed: dict):
         if field_value is not None:
             point.field(field_name, field_value)
 
+    return point
+
+
+def write_feed_to_influx(feed: dict):
+    client = InfluxDBClient(
+        url=INFLUX_URL,
+        token=INFLUX_TOKEN,
+        org=INFLUX_ORG,
+    )
+
+    write_api = client.write_api(write_options=SYNCHRONOUS)
+
+    point = _build_sensor_point(feed)
+
     write_api.write(
         bucket=INFLUX_BUCKET,
         org=INFLUX_ORG,
@@ -71,6 +74,13 @@ def write_feed_to_influx(feed: dict):
     )
 
     client.close()
+
+    fields = {
+        "temperature": safe_float(feed.get("field1")),
+        "humidity": safe_float(feed.get("field2")),
+        "pressure": safe_float(feed.get("field3")),
+        "dew_point": safe_float(feed.get("field4")),
+    }
 
     return {
         "timestamp": feed.get("created_at"),

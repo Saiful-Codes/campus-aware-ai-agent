@@ -1,5 +1,7 @@
 import time
 import re
+from urllib.parse import urlparse
+
 from fastapi import APIRouter
 
 from app.schemas.chat import ChatRequest, ChatResponse
@@ -26,11 +28,28 @@ def _extract_urls_from_chunks(chunks: list[str]) -> list[str]:
     return urls
 
 
+def _rank_urls(urls: list[str]) -> list[str]:
+    """Rank URLs by trust + path specificity. Stable on ties.
+
+    Order:
+      1. URLs containing 'latrobe.edu.au' rank above others.
+      2. Within each group, longer URL paths rank above shorter ones.
+      3. Ties preserve original input order (Python sorted() is stable).
+    """
+    def sort_key(url: str):
+        is_latrobe = "latrobe.edu.au" in url
+        path_len = len(urlparse(url).path)
+        return (-int(is_latrobe), -path_len)
+
+    return sorted(urls, key=sort_key)
+
+
 def _safe_exact_info_response(query: str, urls: list[str]) -> str:
     if urls:
+        ranked = _rank_urls(urls)
         return (
             "I found a reference in the available documents that may help:\n"
-            f"- {urls[0]}\n\n"
+            f"- {ranked[0]}\n\n"
             "Please verify this is the current official page — document contents may not reflect the latest updates."
         )
 

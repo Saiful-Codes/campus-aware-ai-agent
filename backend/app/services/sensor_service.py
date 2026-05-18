@@ -1,17 +1,9 @@
 import requests
 
+from app.services._sensor_utils import safe_float
+
 
 URL = "https://api.thingspeak.com/channels/270748/feeds.json?results=2"
-
-
-def safe_float(value):
-    if value is None or value == "":
-        return None
-
-    try:
-        return float(value)
-    except ValueError:
-        return None
 
 
 def fetch_raw_sensor_data():
@@ -69,41 +61,3 @@ def sync_latest_sensor_data():
         "success": True,
         "data": sensor_data,
     }
-
-
-def build_sensor_response(user_message: str, sensor_data: dict) -> str:
-    if not sensor_data:
-        return "Sorry, I could not fetch the latest sensor data right now."
-
-    message_lower = user_message.lower()
-
-    temperature = sensor_data.get("temperature")
-    humidity = sensor_data.get("humidity")
-    pressure = sensor_data.get("pressure")
-    dew_point = sensor_data.get("dew_point")
-    timestamp = sensor_data.get("timestamp")
-
-    if "temperature" in message_lower or "hot" in message_lower or "cold" in message_lower:
-        return f"The current temperature is {temperature}°C."
-
-    if "humidity" in message_lower:
-        return f"The current humidity is {humidity}%."
-
-    if "pressure" in message_lower:
-        return f"The current pressure is {pressure} hPa."
-
-    if "dew point" in message_lower:
-        return f"The current dew point is {dew_point}."
-
-    if "stuffy" in message_lower or "air" in message_lower:
-        return (
-            f"The current temperature is {temperature}°C and humidity is {humidity}%. "
-            f"It may feel a bit stuffy depending on the room conditions, "
-            f"but this sensor feed does not include CO2 or airflow data, so I cannot confirm air quality precisely."
-        )
-
-    return (
-        f"Latest sensor reading at {timestamp}: "
-        f"temperature {temperature}°C, humidity {humidity}%, "
-        f"pressure {pressure} hPa, dew point {dew_point}."
-    )

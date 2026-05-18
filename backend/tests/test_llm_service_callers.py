@@ -11,9 +11,10 @@ import app.services.llm_service as llm
 # --- Exact fallback strings the spec freezes ---
 
 BUSY_MESSAGE = "Sorry, the AI service is busy right now. Please try again in a moment."
-GENERATE_EMPTY = "Sorry, I could not generate a response."
-SENSOR_EMPTY = "Sorry, I could not generate a sensor-based response."
-HYBRID_EMPTY = "Sorry, I could not generate a hybrid response."
+EMPTY_RESPONSE_MESSAGE = (
+    "I couldn't generate a reliable answer for that question. "
+    "Please try rephrasing or simplifying your request."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +50,7 @@ def test_generate_response_returns_exact_empty_message_when_helper_returns_empty
     ):
         text, status = llm.generate_response("hi")
 
-    assert text == GENERATE_EMPTY
+    assert text == EMPTY_RESPONSE_MESSAGE
     assert status == "error"
 
 
@@ -101,7 +102,7 @@ def test_generate_sensor_response_returns_exact_empty_message_when_helper_return
     ):
         text, status = llm.generate_sensor_response("temperature?", sensor_data)
 
-    assert text == SENSOR_EMPTY
+    assert text == EMPTY_RESPONSE_MESSAGE
     assert status == "error"
 
 
@@ -138,7 +139,7 @@ def test_generate_hybrid_response_returns_exact_empty_message_when_helper_return
     ):
         text, status = llm.generate_hybrid_response("hi", ["chunk one"])
 
-    assert text == HYBRID_EMPTY
+    assert text == EMPTY_RESPONSE_MESSAGE
     assert status == "error"
 
 

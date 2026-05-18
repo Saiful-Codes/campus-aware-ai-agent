@@ -57,6 +57,21 @@ def test_blocks_http_keyword():
     assert is_safe_flux_query(query) is False
 
 
+def test_allows_http_substring_in_tag_name():
+    """A Flux query referencing a tag with 'http' in its name should not be
+    blocked. The block list targets http:// urls and http.* function calls only.
+    """
+    query = """
+    from(bucket: "sensor_data")
+      |> range(start: -30d)
+      |> filter(fn: (r) => r["_measurement"] == "sensor_readings")
+      |> filter(fn: (r) => r["http_status"] == "ok")
+      |> filter(fn: (r) => r["_field"] == "temperature")
+      |> mean()
+    """
+    assert is_safe_flux_query(query) is True
+
+
 def test_blocks_experimental_keyword():
     query = VALID_QUERY + '\n experimental.to()'
     assert is_safe_flux_query(query) is False

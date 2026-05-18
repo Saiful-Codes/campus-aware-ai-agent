@@ -174,23 +174,3 @@ def generate_answer_with_diagnostics(query: str, top_k: int = 5) -> Dict[str, ob
 def generate_answer(query):
     result = generate_answer_with_diagnostics(query)
     return str(result["answer"])
-
-
-if __name__ == "__main__":
-    print("\nRAG + Gemini Ready. Type 'exit' to quit.\n")
-
-    while True:
-        query = input("You: ")
-
-        if query.lower() in ["exit", "quit"]:
-            break
-
-        try:
-            answer = generate_answer(query)
-
-            print("\nAI:\n")
-            print(answer)
-            print("-" * 50)
-
-        except Exception as e:
-            print(f"\nError: {e}\n")
