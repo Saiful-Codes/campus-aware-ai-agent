@@ -1,17 +1,9 @@
 import requests
 
+from app.services._sensor_utils import safe_float
+
 
 URL = "https://api.thingspeak.com/channels/270748/feeds.json?results=2"
-
-
-def safe_float(value):
-    if value is None or value == "":
-        return None
-
-    try:
-        return float(value)
-    except ValueError:
-        return None
 
 
 def fetch_raw_sensor_data():

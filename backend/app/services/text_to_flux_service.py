@@ -298,7 +298,9 @@ def is_safe_flux_query(flux_query: str) -> bool:
         "delete",
         "drop",
         "import ",
-        "http",
+        "http://",
+        "https://",
+        "http.",
         "experimental",
         "to(",
     ]
