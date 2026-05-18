@@ -438,3 +438,208 @@ def test_no_data_message_field_aware_dew_point_uses_human_label():
     # dew_point should render as "dew point" in user-facing text.
     assert "dew point" in msg
     assert "dew_point" not in msg
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5: aggregate record parsing — group() |> mean() drops _field and _time
+# ---------------------------------------------------------------------------
+
+def test_parse_aggregate_record_with_fallback_field_uses_it():
+    # After group() |> mean(), record.values lacks _field and _time
+    values = {"result": "_result", "table": 0, "_start": "x", "_stop": "y", "_value": 94.74}
+    result = _parse_record_values(values, 94.74, None, fallback_field="humidity")
+    assert result is not None
+    assert result["field"] == "humidity"
+    assert result["value"] == 94.74
+    assert result["time"] is None
+
+
+def test_parse_aggregate_record_without_fallback_field_returns_none():
+    values = {"result": "_result", "table": 0, "_start": "x", "_stop": "y", "_value": 94.74}
+    result = _parse_record_values(values, 94.74, None)
+    assert result is None
+
+
+def test_parse_aggregate_record_with_invalid_fallback_field_returns_none():
+    values = {"result": "_result", "table": 0, "_start": "x", "_stop": "y", "_value": 94.74}
+    result = _parse_record_values(values, 94.74, None, fallback_field="not_a_sensor")
+    assert result is None
+
+
+def test_parse_aggregate_record_rounds_float_with_fallback():
+    values = {"_value": 94.7417543859649}
+    result = _parse_record_values(values, 94.7417543859649, None, fallback_field="humidity")
+    assert result is not None
+    assert result["value"] == 94.74
+
+
+def test_parse_explicit_field_wins_over_fallback():
+    # When _field is present and valid, fallback_field must not override it.
+    result = _parse_record_values(
+        {"_field": "temperature"}, 21.5, None, fallback_field="humidity"
+    )
+    assert result == {"time": None, "field": "temperature", "value": 21.5}
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5: run_flux_query — aggregate records (missing _time) must survive
+# ---------------------------------------------------------------------------
+
+from app.services.text_to_flux_service import run_flux_query
+
+
+def _fake_influx_client(records):
+    """Build a stand-in Influx client whose query_api().query() yields records.
+
+    Each record is a MagicMock configured with .values, .get_value(), .get_time().
+    """
+    fake_records = []
+    for r in records:
+        mock_rec = MagicMock()
+        mock_rec.values = r["values"]
+        if "value_raises" in r:
+            mock_rec.get_value.side_effect = r["value_raises"]
+        else:
+            mock_rec.get_value.return_value = r["value"]
+        if "time_raises" in r:
+            mock_rec.get_time.side_effect = r["time_raises"]
+        else:
+            mock_rec.get_time.return_value = r.get("time")
+        fake_records.append(mock_rec)
+
+    fake_table = MagicMock()
+    fake_table.records = fake_records
+
+    fake_client = MagicMock()
+    fake_client.query_api.return_value.query.return_value = [fake_table]
+    return fake_client
+
+
+def test_run_flux_query_aggregate_record_missing_time_is_parsed():
+    fake_client = _fake_influx_client([
+        {
+            "values": {"result": "_result", "table": 0, "_value": 94.74},
+            "value": 94.74,
+            "time_raises": KeyError("_time"),
+        }
+    ])
+
+    with patch.object(t2f, "get_influx_client", return_value=fake_client):
+        result = t2f.run_flux_query("from(bucket: \"x\")", fallback_field="humidity")
+
+    assert len(result) == 1
+    assert result[0]["field"] == "humidity"
+    assert result[0]["value"] == 94.74
+    assert result[0]["time"] is None
+
+
+def test_run_flux_query_normal_raw_record_still_parses():
+    fake_client = _fake_influx_client([
+        {
+            "values": {"_field": "temperature", "_value": 21.5},
+            "value": 21.5,
+            "time": datetime(2026, 5, 17, 14, 23, 57, tzinfo=timezone.utc),
+        }
+    ])
+
+    with patch.object(t2f, "get_influx_client", return_value=fake_client):
+        result = t2f.run_flux_query("from(bucket: \"x\")")
+
+    assert len(result) == 1
+    assert result[0]["field"] == "temperature"
+    assert result[0]["value"] == 21.5
+    assert "2026" in result[0]["time"]
+
+
+def test_run_flux_query_skips_record_when_get_value_raises():
+    fake_client = _fake_influx_client([
+        {
+            "values": {"_field": "temperature"},
+            "value_raises": KeyError("_value"),
+        }
+    ])
+
+    with patch.object(t2f, "get_influx_client", return_value=fake_client):
+        result = t2f.run_flux_query("from(bucket: \"x\")", fallback_field="temperature")
+
+    assert result == []
+
+
+def test_answer_sensor_flux_question_aggregate_humidity_returns_data():
+    """Integration-style: aggregate Flux returns a single record with no _time/_field;
+    answer_sensor_flux_question must pass detected field as fallback and produce data."""
+
+    fake_response = MagicMock()
+    fake_response.text = "Average humidity was about 94.74%."
+    fake_llm_client = MagicMock()
+    fake_llm_client.models.generate_content.return_value = fake_response
+
+    fake_influx = _fake_influx_client([
+        {
+            "values": {"result": "_result", "table": 0, "_value": 94.74},
+            "value": 94.74,
+            "time_raises": KeyError("_time"),
+        }
+    ])
+
+    flux = (
+        'from(bucket: "sensor_data") |> range(start: -7d) '
+        '|> filter(fn: (r) => r["_measurement"] == "sensor_readings") '
+        '|> filter(fn: (r) => r["_field"] == "humidity") '
+        '|> group() |> mean()'
+    )
+
+    with patch.object(t2f, "client", fake_llm_client), \
+         patch.object(t2f, "generate_flux_from_question", return_value=flux), \
+         patch.object(t2f, "get_influx_client", return_value=fake_influx), \
+         patch.object(t2f, "INFLUX_BUCKET", "sensor_data"):
+        result = t2f.answer_sensor_flux_question(
+            "What was the average humidity in the last 7 days?"
+        )
+
+    assert result["status"] == "text_to_flux_response"
+    assert len(result["data"]) == 1
+    assert result["data"][0]["field"] == "humidity"
+    assert result["data"][0]["value"] == 94.74
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5: "last N <unit>" / "past N <unit>" time-range parsing
+# ---------------------------------------------------------------------------
+
+def test_time_range_info_last_7_days():
+    info = get_time_range_info("What was the average humidity in the last 7 days?")
+    assert info["flux_range"] == "start: -7d"
+    assert info["label"] == "the last 7 days"
+
+
+def test_time_range_info_past_7_days():
+    info = get_time_range_info("Show humidity from the past 7 days")
+    assert info["flux_range"] == "start: -7d"
+    assert info["label"] == "the past 7 days"
+
+
+def test_time_range_info_last_14_days():
+    info = get_time_range_info("Show temperature trend over the last 14 days")
+    assert info["flux_range"] == "start: -14d"
+    assert info["label"] == "the last 14 days"
+
+
+def test_time_range_info_last_3_weeks():
+    info = get_time_range_info("Show temperature over the last 3 weeks")
+    assert info["flux_range"] == "start: -21d"
+    assert info["label"] == "the last 3 weeks"
+
+
+def test_time_range_info_last_6_hours():
+    info = get_time_range_info("Show humidity from the last 6 hours")
+    assert info["flux_range"] == "start: -6h"
+    assert info["label"] == "the last 6 hours"
+
+
+def test_time_range_info_last_week_regression_still_explicit():
+    # Regression: the explicit "last week" branch must keep mapping to -14d / "last week"
+    # (NOT "last 1 weeks" or similar from a numeric fallthrough).
+    info = get_time_range_info("What was the temperature last week?")
+    assert info["flux_range"] == "start: -14d"
+    assert info["label"] == "last week"

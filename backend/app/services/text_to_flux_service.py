@@ -107,6 +107,14 @@ SENSOR_FIELDS = frozenset({"temperature", "humidity", "pressure", "dew_point"})
 
 _YEAR_PATTERN = re.compile(r'\b(19|20)\d{2}\b')
 
+# Matches phrases like "last 7 days", "past 14 days", "last 3 weeks", "last 6 hours".
+# Requires a digit, so explicit phrases like "last week" / "this month" are unaffected.
+_RELATIVE_N_UNITS_PATTERN = re.compile(
+    r'\b(last|past)\s+(\d+)\s+(hour|day|week|month|year)s?\b'
+)
+
+_UNIT_TO_DAYS = {"day": 1, "week": 7, "month": 30, "year": 365}
+
 _MONTH_MAP = {
     "january": 1, "february": 2, "march": 3, "april": 4,
     "may": 5, "june": 6, "july": 7, "august": 8,
@@ -143,6 +151,21 @@ def get_time_range_info(user_question: str) -> dict:
         start = f"{year:04d}-01-01T00:00:00Z"
         stop = f"{year + 1:04d}-01-01T00:00:00Z"
         return {"flux_range": f"start: {start}, stop: {stop}", "label": str(year)}
+
+    # Numeric relative phrases ("last 7 days", "past 3 weeks", "last 6 hours").
+    # Requires a digit, so the explicit branches below ("last week", "this month")
+    # still take their own paths.
+    n_match = _RELATIVE_N_UNITS_PATTERN.search(q)
+    if n_match:
+        prep, n_str, unit = n_match.group(1), n_match.group(2), n_match.group(3)
+        n = int(n_str)
+        if unit == "hour":
+            flux_range = f"start: -{n}h"
+        else:
+            days = n * _UNIT_TO_DAYS[unit]
+            flux_range = f"start: -{days}d"
+        plural = unit if n == 1 else f"{unit}s"
+        return {"flux_range": flux_range, "label": f"the {prep} {n} {plural}"}
 
     # Relative keywords — ordered most-specific first
     if "last hour" in q or "past hour" in q:
@@ -205,18 +228,22 @@ def _build_no_data_message(time_label: str, field_label: str | None = None) -> s
     )
 
 
-def _parse_record_values(values: dict, raw_value, raw_time) -> dict | None:
+def _parse_record_values(values: dict, raw_value, raw_time, fallback_field: str | None = None) -> dict | None:
     """Parse a FluxRecord's raw fields into a clean result dict.
 
     Returns None for records that should be skipped:
     - null/None values (empty aggregateWindow windows)
     - metadata or unknown field names (_time, _measurement, etc.)
     - pivot() records where no known sensor column is present
+    - aggregate records (group() |> mean()) with no fallback_field hint
 
     Args:
-        values:    record.values dict from FluxRecord
-        raw_value: result of record.get_value() (the _value column)
-        raw_time:  result of record.get_time() (datetime or None)
+        values:         record.values dict from FluxRecord
+        raw_value:      result of record.get_value() (the _value column)
+        raw_time:       result of record.get_time() (datetime or None)
+        fallback_field: sensor field name detected from the user question.
+                        Used only when both _field and any sensor-named column
+                        are absent (group() + aggregate drops _field).
     """
     field = values.get("_field")
     value = raw_value
@@ -229,6 +256,12 @@ def _parse_record_values(values: dict, raw_value, raw_time) -> dict | None:
                 v = values[known]
                 value = round(v, 2) if isinstance(v, float) else v
                 break
+
+    # Aggregate result: group() |> mean() drops _field entirely, leaving only
+    # _value. Fall back to the field detected from the user question, but only
+    # if it's a known sensor field.
+    if (field is None or field not in SENSOR_FIELDS) and fallback_field in SENSOR_FIELDS:
+        field = fallback_field
 
     if field is None or field not in SENSOR_FIELDS:
         return None
@@ -329,7 +362,7 @@ def is_safe_flux_query(flux_query: str) -> bool:
     return True
 
 
-def run_flux_query(flux_query: str):
+def run_flux_query(flux_query: str, fallback_field: str | None = None):
     influx_client = get_influx_client()
     query_api = influx_client.query_api()
 
@@ -339,18 +372,26 @@ def run_flux_query(flux_query: str):
         except Exception as e:
             print(f"Influx query execution failed: {e}")
             return []
-          
+
         results = []
 
         for table in tables:
             for record in table.records:
                 try:
                     raw_value = record.get_value()
-                    raw_time = record.get_time()
                 except Exception:
                     continue
 
-                parsed = _parse_record_values(record.values, raw_value, raw_time)
+                # Aggregate records (group() |> mean()) drop the _time column;
+                # treat that as no-time rather than skipping the whole record.
+                try:
+                    raw_time = record.get_time()
+                except Exception:
+                    raw_time = None
+
+                parsed = _parse_record_values(
+                    record.values, raw_value, raw_time, fallback_field=fallback_field
+                )
                 if parsed is not None:
                     results.append(parsed)
 
@@ -458,10 +499,10 @@ def answer_sensor_flux_question(user_question: str):
             "data": [],
         }
 
-    query_result = run_flux_query(flux_query)
+    field_label = _detect_sensor_field(user_question)
+    query_result = run_flux_query(flux_query, fallback_field=field_label)
 
     if not query_result:
-        field_label = _detect_sensor_field(user_question)
         return {
             "answer": _build_no_data_message(time_info["label"], field_label=field_label),
             "status": "text_to_flux_no_data",
