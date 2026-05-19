@@ -5,16 +5,8 @@ from urllib.parse import urlparse
 from fastapi import APIRouter
 
 from app.schemas.chat import ChatRequest, ChatResponse
-from app.services.llm_service import (
-    generate_hybrid_response,
-    generate_response,
-    generate_sensor_response,
-)
+from app.services.navigation_service import answer_navigation_query
 from app.services.routing_service import classify_query_intent
-from app.services.influx_sensor_service import sync_latest_sensor_data_to_influx
-from app.services.influx_query_service import get_latest_sensor_reading_from_influx
-from app.services.text_to_flux_service import answer_sensor_flux_question
-from app.rag.rag_pipeline import generate_answer_with_diagnostics
 
 router = APIRouter()
 
@@ -122,6 +114,8 @@ def chat(request: ChatRequest):
         print("Detected SENSOR DATABASE query. Using Text-to-Flux flow...")
 
         try:
+            from app.services.text_to_flux_service import answer_sensor_flux_question
+
             result = answer_sensor_flux_question(request.query)
             debug_data["sourcesUsed"] = ["influxdb", "text_to_flux"]
 
@@ -152,6 +146,10 @@ def chat(request: ChatRequest):
         print("Detected SENSOR query. Using InfluxDB-backed IoT sensor flow...")
 
         try:
+            from app.services.influx_sensor_service import sync_latest_sensor_data_to_influx
+            from app.services.influx_query_service import get_latest_sensor_reading_from_influx
+            from app.services.llm_service import generate_sensor_response
+
             sync_result = sync_latest_sensor_data_to_influx()
             print(f"Influx sensor sync result: {sync_result}")
 
@@ -181,8 +179,22 @@ def chat(request: ChatRequest):
                 debug_data,
             )
 
+    if intent in {"navigation_where", "navigation_directions", "navigation_nearest"}:
+        print("Detected NAVIGATION query. Using structured campus navigation DB flow...")
+
+        answer, status = answer_navigation_query(intent, request.query)
+        debug_data["sourcesUsed"] = ["postgres_navigation"]
+
+        total_time = time.time() - request_start
+        print(f"Total backend time: {total_time:.2f} seconds")
+        print("===== NAVIGATION REQUEST FINISHED =====\n")
+
+        return _with_debug(request, answer, status, debug_data)
+
     if intent == "exact_current_info":
         print("Detected exact/current info query. Applying trusted-source guardrail...")
+        from app.rag.rag_pipeline import generate_answer_with_diagnostics
+
         rag_result = generate_answer_with_diagnostics(request.query)
         urls = _extract_urls_from_chunks(rag_result.get("context_chunks", []))
         answer = _safe_exact_info_response(request.query, urls)
@@ -203,6 +215,9 @@ def chat(request: ChatRequest):
 
     if intent in {"rag_specific", "general_conceptual"}:
         print("Detected RAG-capable query. Evaluating RAG confidence...")
+        from app.rag.rag_pipeline import generate_answer_with_diagnostics
+        from app.services.llm_service import generate_hybrid_response
+
         rag_result = generate_answer_with_diagnostics(request.query)
         rag_confidence = rag_result.get("confidence", "low")
         debug_data["ragConfidence"] = rag_confidence
@@ -243,6 +258,8 @@ def chat(request: ChatRequest):
 
     # Normal LLM fallback
     print("Detected NORMAL query. Using standard LLM flow...")
+
+    from app.services.llm_service import generate_response
 
     answer, status = generate_response(request.query)
     debug_data["sourcesUsed"] = ["llm"]

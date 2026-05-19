@@ -55,6 +55,43 @@ SENSOR_LIVE_KEYWORDS = [
     "right now",
 ]
 
+NAVIGATION_WHERE_PATTERNS = [
+    "where is",
+    "where's",
+    "location of",
+]
+
+NAVIGATION_DIRECTIONS_PATTERNS = [
+    "how do i get to",
+    "how do i get from",
+    "how to get to",
+    "how to get from",
+    "how to go from",
+    "how to go to",
+    "directions to",
+    "directions from",
+    "route to",
+    "route from",
+    "way to",
+]
+
+NAVIGATION_NEAREST_PATTERNS = [
+    "nearest",
+    "closest",
+]
+
+NAVIGATION_FACILITY_KEYWORDS = [
+    "bathroom",
+    "toilet",
+    "restroom",
+    "washroom",
+    "library",
+    "lab",
+    "laboratory",
+    "study space",
+    "study",
+]
+
 GENERAL_CONCEPTUAL_PATTERNS = [
     "how can campuses improve",
     "how can campus improve",
@@ -163,20 +200,46 @@ def classify_query_intent(message: str) -> Dict[str, object]:
             "reason": "Detected live/current sensor wording.",
         }
 
-    if _contains_any(text, GENERAL_CONCEPTUAL_PATTERNS):
-        return {
-            "intent": "general_conceptual",
-            "confidence": 0.9,
-            "requiredTools": ["llm", "rag_optional"],
-            "reason": "Detected broad conceptual phrasing.",
-        }
-
     if _contains_any(text, EXACT_CURRENT_INFO_KEYWORDS):
         return {
             "intent": "exact_current_info",
             "confidence": 0.88,
             "requiredTools": ["rag", "trusted_sources_guardrail"],
             "reason": "Detected exact/current/link/price request.",
+        }
+
+    if _contains_any(text, NAVIGATION_DIRECTIONS_PATTERNS):
+        return {
+            "intent": "navigation_directions",
+            "confidence": 0.94,
+            "requiredTools": ["postgres_navigation"],
+            "reason": "Detected navigation directions phrasing.",
+        }
+
+    if _contains_any(text, NAVIGATION_NEAREST_PATTERNS) and _contains_any(
+        text, NAVIGATION_FACILITY_KEYWORDS
+    ):
+        return {
+            "intent": "navigation_nearest",
+            "confidence": 0.94,
+            "requiredTools": ["postgres_navigation"],
+            "reason": "Detected nearest-facility navigation phrasing.",
+        }
+
+    if _contains_any(text, NAVIGATION_WHERE_PATTERNS):
+        return {
+            "intent": "navigation_where",
+            "confidence": 0.9,
+            "requiredTools": ["postgres_navigation"],
+            "reason": "Detected where-is navigation phrasing.",
+        }
+
+    if _contains_any(text, GENERAL_CONCEPTUAL_PATTERNS):
+        return {
+            "intent": "general_conceptual",
+            "confidence": 0.9,
+            "requiredTools": ["llm", "rag_optional"],
+            "reason": "Detected broad conceptual phrasing.",
         }
 
     if _contains_any(text, RAG_SPECIFIC_KEYWORDS):
