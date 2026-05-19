@@ -142,6 +142,11 @@ def test_navigation_directions_how_to_go_to_routes_navigation_intent():
     assert result["intent"] == "navigation_directions"
 
 
+def test_navigation_directions_route_from_routes_navigation_intent():
+    result = classify_query_intent("route from jg to lims2")
+    assert result["intent"] == "navigation_directions"
+
+
 def test_navigation_nearest_bathroom_routes_navigation_intent():
     result = classify_query_intent("Nearest bathroom?")
     assert result["intent"] == "navigation_nearest"

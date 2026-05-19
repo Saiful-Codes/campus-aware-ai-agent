@@ -35,6 +35,13 @@ NEAREST_FACILITY_PATTERNS: Dict[str, List[str]] = {
     "study_space": ["study", "study space", "commons"],
 }
 
+FACILITY_TYPE_LABELS: Dict[str, str] = {
+    "bathroom": "bathroom",
+    "library": "library",
+    "lab": "lab",
+    "study_space": "study space",
+}
+
 
 def _open_pg_connection():
     return open_postgres_connection()
@@ -373,9 +380,10 @@ def answer_nearest_query(query: str) -> Tuple[str, str]:
             "navigation_nearest_not_found",
         )
 
+    facility_label = FACILITY_TYPE_LABELS.get(facility_type, facility_type.replace("_", " "))
     meters = round((nearest["dist_sq"] ** 0.5) * METERS_PER_GRID_STEP)
     return (
-        f"The nearest {facility_type} is {nearest['name']} near {nearest['location_name']} (grid {nearest['grid_ref']}), approximately {meters} metres away.",
+        f"The nearest {facility_label} is {nearest['name']} near {nearest['location_name']} (grid {nearest['grid_ref']}), approximately {meters} metres away.",
         "navigation_nearest_success",
     )
 

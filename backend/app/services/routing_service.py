@@ -65,10 +65,13 @@ NAVIGATION_DIRECTIONS_PATTERNS = [
     "how do i get to",
     "how do i get from",
     "how to get to",
+    "how to get from",
     "how to go from",
     "how to go to",
     "directions to",
+    "directions from",
     "route to",
+    "route from",
     "way to",
 ]
 
