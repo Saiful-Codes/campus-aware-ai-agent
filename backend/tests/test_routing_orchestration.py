@@ -43,7 +43,7 @@ def test_current_temperature_routes_sensor_live():
 
 def test_specific_latrobe_policy_routes_rag_specific():
     result = classify_query_intent("Where is Ask La Trobe and what services does it provide?")
-    assert result["intent"] == "rag_specific"
+    assert result["intent"] == "navigation_where"
 
 
 # --- Phase 2: routing bug fixes ---
@@ -119,7 +119,32 @@ def test_studentonline_routes_rag_specific():
 
 def test_campus_map_routes_rag_specific():
     result = classify_query_intent("Where is the campus map?")
-    assert result["intent"] == "rag_specific"
+    assert result["intent"] == "navigation_where"
+
+
+def test_navigation_directions_routes_navigation_intent():
+    result = classify_query_intent("How do I get to TLC?")
+    assert result["intent"] == "navigation_directions"
+
+
+def test_navigation_directions_from_to_routes_navigation_intent():
+    result = classify_query_intent("How do I get from Agora to DW?")
+    assert result["intent"] == "navigation_directions"
+
+
+def test_navigation_directions_how_to_go_from_routes_navigation_intent():
+    result = classify_query_intent("How to go from TLC to DW?")
+    assert result["intent"] == "navigation_directions"
+
+
+def test_navigation_directions_how_to_go_to_routes_navigation_intent():
+    result = classify_query_intent("How to go to DW?")
+    assert result["intent"] == "navigation_directions"
+
+
+def test_navigation_nearest_bathroom_routes_navigation_intent():
+    result = classify_query_intent("Nearest bathroom?")
+    assert result["intent"] == "navigation_nearest"
 
 
 def test_benefits_of_green_spaces_routes_general_conceptual():

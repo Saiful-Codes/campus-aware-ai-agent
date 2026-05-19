@@ -2,8 +2,6 @@ import asyncio
 import logging
 import os
 
-from app.services.influx_sensor_service import sync_latest_sensor_data_to_influx
-
 logger = logging.getLogger(__name__)
 
 
@@ -37,6 +35,15 @@ async def run_sensor_ingestion_loop() -> None:
 
     interval = _get_interval()
     logger.info("[Scheduler] Starting sensor ingestion loop (interval=%ds).", interval)
+
+    try:
+        from app.services.influx_sensor_service import sync_latest_sensor_data_to_influx
+    except Exception as exc:
+        logger.warning(
+            "[Scheduler] Influx sensor sync dependency unavailable — scheduler disabled: %s",
+            exc,
+        )
+        return
 
     while True:
         try:

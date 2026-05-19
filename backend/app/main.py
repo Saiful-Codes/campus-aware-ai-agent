@@ -8,8 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.chat import router as chat_router
 from app.api import sensor
-from app.api.rag_chat import router as rag_router
+from app.services.navigation_bootstrap_service import ensure_navigation_data_ready
 from app.services.sensor_scheduler import run_sensor_ingestion_loop
+
+try:
+    from app.api.rag_chat import router as rag_router
+except Exception:
+    rag_router = None
 
 # Give user-defined loggers (app.*) a visible output path.
 # uvicorn's dictConfig only wires uvicorn.* loggers; the root logger gets no
@@ -36,6 +41,9 @@ async def lifespan(app: FastAPI):
             "Backend starting in %s — skipping strict env validation.",
             settings.APP_ENV,
         )
+
+    logger.info("Backend starting — ensuring campus navigation data is ready.")
+    ensure_navigation_data_ready()
 
     logger.info("Backend starting — launching sensor ingestion scheduler.")
     task = asyncio.create_task(run_sensor_ingestion_loop())
@@ -69,4 +77,5 @@ def health_check():
     }
 
 
-app.include_router(rag_router, prefix="/rag", tags=["RAG"])
+if rag_router is not None:
+    app.include_router(rag_router, prefix="/rag", tags=["RAG"])
