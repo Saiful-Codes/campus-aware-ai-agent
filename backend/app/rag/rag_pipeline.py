@@ -25,9 +25,9 @@ def _open_pg_connection():
         port=os.getenv("DB_PORT"),
     )
 
-RAG_SIMILARITY_HIGH = 0.75
-RAG_SIMILARITY_MEDIUM = 0.62
-RAG_SIMILARITY_THRESHOLD = 0.62
+RAG_SIMILARITY_HIGH = 0.52
+RAG_SIMILARITY_MEDIUM = 0.46
+RAG_SIMILARITY_THRESHOLD = 0.46
 
 
 def retrieve(query, top_k=3):
