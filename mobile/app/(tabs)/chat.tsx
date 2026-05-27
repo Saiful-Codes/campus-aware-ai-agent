@@ -108,6 +108,27 @@ export default function ChatScreen() {
 
   const activeMessages: Message[] = threadMessages[activeThreadId] ?? [];
 
+  // Guarantee a visible "Thinking…" loader while a request is in flight.
+  // The guest flow keeps a local streaming "…" placeholder, but for
+  // authenticated users the Firestore subscription replaces local state and
+  // strips that placeholder (every synced message is mapped to
+  // streaming:false). When we are waiting and no assistant message is present
+  // yet, synthesize a transient thinking bubble so the loader stays visible
+  // until the reply lands. Driven by isLoading, so it works for every backend
+  // path (normal LLM, RAG/hybrid, sensor live, sensor history/Text-to-Flux).
+  const displayMessages: Message[] = useMemo(() => {
+    if (!isLoading) return activeMessages;
+    const lastMsg = activeMessages[activeMessages.length - 1];
+    if (lastMsg && lastMsg.role === "assistant") return activeMessages;
+    const thinkingPlaceholder: Message = {
+      id: "__thinking_placeholder__",
+      role: "assistant",
+      text: "…",
+      streaming: true,
+    };
+    return [...activeMessages, thinkingPlaceholder];
+  }, [activeMessages, isLoading]);
+
   // ── Computed user info for sidebar
   const userInitial = isGuest
     ? "G"
@@ -780,7 +801,7 @@ export default function ChatScreen() {
       {/* ── Message list ── */}
       <FlatList
         ref={listRef}
-        data={activeMessages}
+        data={displayMessages}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => (
           <ChatBubble

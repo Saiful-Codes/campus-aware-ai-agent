@@ -3,13 +3,11 @@
 
 This guide explains how each team member should set up the project locally on their own machine.
 
-This setup guide is based on the current project state:
-- GitHub repo already created
-- Teammates already added as collaborators
-- Project structure already created
-- Mobile frontend starter project already set up
-- Backend starter project already set up
-- Frontend and backend already connected through the `/health` endpoint
+This setup guide reflects the current, feature-complete project state:
+- Mobile app and FastAPI backend are fully implemented
+- Intent routing, RAG, Text-to-Flux, live/historical sensors, and hallucination guardrails are all working
+- Local infrastructure (PostgreSQL + pgvector, InfluxDB) runs via Docker Compose
+- Firebase Authentication is integrated in the mobile app
 
 ---
 
@@ -53,6 +51,16 @@ This project uses a **monorepo** structure, which means both frontend and backen
 - Uvicorn
 - Pydantic
 - python-dotenv
+
+#### AI & Data
+- Google Gemini (Gemini 2.5 Flash) via `google-genai`
+- PostgreSQL 16 + `pgvector` (RAG document store)
+- `sentence-transformers/all-MiniLM-L6-v2` (embeddings)
+- PyMuPDF (PDF parsing)
+- InfluxDB 2.7 (sensor time-series + Flux analytics)
+- Firebase Authentication (mobile)
+
+> This project uses **Google Gemini**, not OpenAI, and does not use LangChain.
 
 #### Development Tools
 - Git + GitHub
@@ -242,12 +250,16 @@ Create a PR from `feature/your-task-name` → `dev`
 
 ## 6. Root-Level Environment Setup
 
-There is a root `.env.example` file in the repo.
+The repo provides example env files with safe placeholder values:
+- Root **`.env.example`** — template for `backend/.env`
+- **`mobile/.env.example`** — template for `mobile/.env`
 
-> ⚠️ Do **not** put real secrets into `.env.example`  
+Copy each to its real `.env` and fill in your values (see the Frontend and Backend setup sections below).
+
+> ⚠️ Do **not** put real secrets into the `.env.example` files  
 > ⚠️ Do **not** commit real `.env` files to GitHub
 
-At the current stage, the frontend uses its own `mobile/.env` and the backend uses its own `backend/.env`, so teammates do not need a root `.env` to run the current setup.
+The frontend uses `mobile/.env` and the backend uses `backend/.env`; there is no root `.env`.
 
 ---
 
@@ -269,7 +281,7 @@ pnpm install
 
 **Step 3:** Create the frontend environment file
 
-Inside `mobile/`, create a file named `.env` and add:
+Copy `mobile/.env.example` to `mobile/.env`, then set the URL to your laptop's IPv4 address:
 
 ```env
 EXPO_PUBLIC_API_BASE_URL=http://YOUR-LAPTOP-IP:8000
@@ -336,12 +348,15 @@ pip install -r requirements.txt
 
 **Step 5:** Create the backend environment file
 
-Inside `backend/`, create a file named `.env` and add:
+Copy the root `.env.example` to `backend/.env`, then fill in your values. The defaults below match the Dockerised databases from `docker-compose.yml`:
 
 ```env
 APP_ENV=development
 APP_HOST=0.0.0.0
 APP_PORT=8000
+
+# Google Gemini (required)
+GEMINI_API_KEY=your_gemini_api_key
 
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
@@ -349,23 +364,36 @@ POSTGRES_DB=campus_ai
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
 
-INFLUXDB_URL=http://localhost:8086
-INFLUXDB_TOKEN=your_influx_token
-INFLUXDB_ORG=your_org
-INFLUXDB_BUCKET=your_bucket
+# InfluxDB — note the host port is 18086, not 8086
+INFLUXDB_URL=http://localhost:18086
+INFLUXDB_TOKEN=campus-ai-token-123
+INFLUXDB_ORG=campus-ai
+INFLUXDB_BUCKET=sensor_data
 
-OPENAI_API_KEY=your_openai_api_key
+# Sensor ingestion loop — set to false to disable during tests/offline work
+SENSOR_SYNC_ENABLED=true
+SENSOR_SYNC_INTERVAL_SECONDS=300
 ```
 
-> Database, InfluxDB, and OpenAI values can stay as placeholders for now if not yet in use.
+> `GEMINI_API_KEY` is required to run the AI features. The InfluxDB values above are the defaults created by `docker compose up -d`.
 
-**Step 6:** Run the backend
+**Step 6:** Start the local databases (PostgreSQL + InfluxDB)
+
+From the repo root, in a separate terminal:
+
+```bash
+docker compose up -d
+```
+
+This starts PostgreSQL on `5432` and InfluxDB on `18086`.
+
+**Step 7:** Run the backend
 
 ```bash
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Keep this terminal running.
+On startup the backend validates required env vars (in production/staging), ensures campus navigation data is ready, and launches the sensor ingestion loop. Keep this terminal running.
 
 ---
 
@@ -436,6 +464,18 @@ Example:
 http://192.168.0.109:8000/health
 ```
 
+### Other endpoints
+
+Once running, the backend also exposes:
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/chat` | Main intent-orchestrated chat |
+| `POST` | `/rag/chat` | Direct RAG chat |
+| `GET`  | `/sensor/latest` | Latest live sensor reading |
+
+Explore and try these interactively at `http://127.0.0.1:8000/docs`.
+
 ---
 
 ## 11. How to Test the Frontend–Backend Connection
@@ -472,21 +512,18 @@ If you see this, the frontend and backend are connected successfully. ✅
 
 ## 12. Backend Test Command
 
-A basic pytest test is already included. To run backend tests:
+An automated test suite covering routing, Flux query safety, parsing, retries, configuration, and hallucination guardrails is included. To run backend tests:
 
-```bash
+```powershell
 cd backend
 .venv\Scripts\Activate.ps1
+$env:SENSOR_SYNC_ENABLED = "false"   # avoids sensor-loop noise during tests
 python -m pytest
 ```
 
-Expected result:
+This runs the full suite (well over a hundred tests). See [`testing-summary.md`](testing-summary.md) for the breakdown and the manual QA framework.
 
-```
-1 passed
-```
-
-> **Important:** Always activate `.venv` first. Use `python -m pytest` rather than plain `pytest` if you are unsure about environment issues.
+> **Important:** Always activate `.venv` first. Use `python -m pytest` rather than plain `pytest` if you are unsure about environment issues. Set `SENSOR_SYNC_ENABLED=false` so the sensor ingestion loop does not run during tests.
 
 ---
 
@@ -572,30 +609,29 @@ __pycache__/
 
 ## 15. Current Project Status
 
-### ✅ Complete
+The project is **feature-complete** (final sprint). All core systems are implemented and working:
 
-- GitHub repo set up
-- Project structure created
-- Mobile frontend starter created
-- FastAPI backend starter created
-- Backend `/health` endpoint working
-- Backend test working
-- Frontend successfully connected to backend
+- ✅ Mobile app (Expo / React Native) with Firebase Authentication
+- ✅ FastAPI backend with `/health`, `/chat`, `/rag/chat`, and `/sensor/latest`
+- ✅ Intent routing orchestrator (live sensor, historical sensor, RAG, conversational)
+- ✅ PostgreSQL + `pgvector` RAG document store
+- ✅ InfluxDB sensor ingestion + Text-to-Flux historical analytics
+- ✅ Google Gemini integration with hallucination guardrails
+- ✅ Automated test suite and manual QA framework
 
-### 🔜 Not Yet Required
-
-The following will be added in later phases:
-
-- PostgreSQL integration
-- InfluxDB integration
-- Firebase Authentication
-- AI / RAG / Text-to-SQL features
+Sprint 5 focuses on polish, stability, and deployment/demo readiness rather than new systems.
 
 ---
 
 ## 16. Quick Start Summary
 
 If you have already installed all required software, here is the usual daily startup flow:
+
+### Databases (from repo root)
+
+```bash
+docker compose up -d
+```
 
 ### Backend Terminal
 

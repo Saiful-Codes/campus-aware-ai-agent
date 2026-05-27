@@ -110,6 +110,7 @@ EXACT_CURRENT_INFO_KEYWORDS = [
     "calendar",
     "academic calendar",
     "current fee",
+    "tuition",
     "weekly rent",
     "rent",
     "how much",
@@ -136,6 +137,18 @@ RAG_SPECIFIC_KEYWORDS = [
     "library hours",
     "building",
     "campus map",
+]
+
+# Explicit document/official-information phrasing that should be answered from
+# the RAG corpus rather than the general LLM. Substring-matched, so "document"
+# also catches "documents" and "opening hours" catches "library opening hours".
+DOCUMENT_INTENT_KEYWORDS = [
+    "document",
+    "pdf",
+    "policy",
+    "handbook",
+    "course information",
+    "opening hours",
 ]
 
 
@@ -242,7 +255,9 @@ def classify_query_intent(message: str) -> Dict[str, object]:
             "reason": "Detected broad conceptual phrasing.",
         }
 
-    if _contains_any(text, RAG_SPECIFIC_KEYWORDS):
+    if _contains_any(text, RAG_SPECIFIC_KEYWORDS) or _contains_any(
+        text, DOCUMENT_INTENT_KEYWORDS
+    ):
         return {
             "intent": "rag_specific",
             "confidence": 0.82,

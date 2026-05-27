@@ -179,3 +179,68 @@ def test_existing_2026_calendar_still_routes_exact_current_info():
     # queries that previously matched on it via other keywords.
     result = classify_query_intent("Give me the exact link for 2026 academic calendar")
     assert result["intent"] == "exact_current_info"
+
+
+# --- Sprint 5: document-intent routing for document/official queries ---
+# Previously these fell through to normal_llm, so the UI showed an ungrounded
+# Gemini answer instead of a RAG-grounded one.
+
+def test_library_opening_hours_routes_rag_specific():
+    result = classify_query_intent(
+        "What are the library opening hours according to the university documents?"
+    )
+    assert result["intent"] == "rag_specific"
+
+
+def test_according_to_documents_routes_rag_specific():
+    result = classify_query_intent("According to the university documents, what is mentioned about parking?")
+    assert result["intent"] == "rag_specific"
+
+
+def test_from_uploaded_documents_routes_rag_specific():
+    result = classify_query_intent("From the uploaded documents, summarise the key points")
+    assert result["intent"] == "rag_specific"
+
+
+def test_based_on_pdf_routes_rag_specific():
+    result = classify_query_intent("Based on the PDF, what is the refund process?")
+    assert result["intent"] == "rag_specific"
+
+
+def test_policy_question_routes_rag_specific():
+    result = classify_query_intent("What does the policy say about late submissions?")
+    assert result["intent"] == "rag_specific"
+
+
+def test_handbook_question_routes_rag_specific():
+    result = classify_query_intent("What does the handbook say about assessments?")
+    assert result["intent"] == "rag_specific"
+
+
+def test_course_information_routes_rag_specific():
+    result = classify_query_intent("What course information is available?")
+    assert result["intent"] == "rag_specific"
+
+
+# --- Sprint 5: tuition/fee queries route to the trusted-source guardrail ---
+
+def test_tuition_fee_routes_exact_current_info():
+    result = classify_query_intent(
+        "What is the tuition fee for Master of Artificial Intelligence in 2027?"
+    )
+    assert result["intent"] == "exact_current_info"
+
+
+# --- Regression: sensor priority must still beat document-intent wording ---
+
+def test_average_temperature_in_documents_still_routes_sensor_history():
+    result = classify_query_intent(
+        "What is the average temperature according to the documents?"
+    )
+    assert result["intent"] == "sensor_history"
+
+
+def test_coffee_question_does_not_route_exact_current_info():
+    # Guards against adding a bare "fee" keyword that would match "coffee".
+    result = classify_query_intent("Is there coffee available on campus?")
+    assert result["intent"] != "exact_current_info"

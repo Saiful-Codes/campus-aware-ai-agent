@@ -60,3 +60,10 @@ docs/superpowers/
 CLAUDE.md
 progress.md
 plan.md
+docs/codebase-cleanup-plan.md
+
+# Generated outputs
+backend/outputs/
+
+# Local database artifacts
+*.db
