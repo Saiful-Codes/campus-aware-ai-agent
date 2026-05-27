@@ -102,6 +102,7 @@ export default function ChatScreen() {
   const [settingsModalVisible, setSettingsModalVisible] = useState(false);
 
   const listRef = useRef<FlatList<Message>>(null);
+  const inputRef = useRef<TextInput>(null);
   const sidebarAnim = useRef(new Animated.Value(-280)).current;
   const sidebarIntentRef = useRef(false); // true = open, false = closed; guards stale animation callbacks
 
@@ -237,6 +238,7 @@ export default function ChatScreen() {
     setInput("");
     setIsLoading(false);
   }, [user, isGuest]);
+
 
   // ── Persist threads ───────────────────────────────────────────────────────
 
@@ -679,6 +681,20 @@ export default function ChatScreen() {
     }
   };
 
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const node = (inputRef.current as any)?._node ?? (inputRef.current as any);
+    if (!node) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    };
+    node.addEventListener('keydown', handler);
+    return () => node.removeEventListener('keydown', handler);
+  }, [handleSend]);
+
   const handleStreamComplete = (msgId: string) => {
     if (isAuthenticatedUser) return;
 
@@ -796,6 +812,7 @@ export default function ChatScreen() {
       {/* ── Input bar ── */}
       <View style={[styles.inputContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
         <TextInput
+          ref={inputRef}
           value={input}
           onChangeText={setInput}
           placeholder="Ask a question..."
