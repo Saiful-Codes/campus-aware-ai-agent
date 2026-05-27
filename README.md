@@ -144,4 +144,4 @@ The automated suite covers routing, Flux query safety, parsing, retries, configu
 
 ## Team
 
-Capstone project, La Trobe University. Contributors: Saiful Islam Shihab (backend/AI, Scrum Master), Ruhan (RAG), Sam (frontend), Sadaat (auth/routing), Sneh (QA).
+Capstone project, La Trobe University. Contributors: Saiful Islam Shihab (backend+AI), Ruhan (RAG+AI), Sam (frontend), Sadaat (auth+routing+security), Sneh (Documentation+QA).
