@@ -2,6 +2,7 @@ import {
   Check,
   ChevronUp,
   LogOut,
+  MessageCircle,
   MessageSquare,
   Pencil,
   Plus,
@@ -13,6 +14,7 @@ import {
 import React, { useState } from "react";
 import {
   Animated,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -281,6 +283,18 @@ function PanelContent({
                 <Settings color={colors.text} size={15} />
                 <Text style={[styles.accountMenuText, { color: colors.text, fontSize: getFontSize(14, largeText) }]}>
                   Settings
+                </Text>
+              </Pressable>
+              <Pressable
+                style={styles.accountMenuItem}
+                onPress={() => {
+                  setAccountMenuOpen(false);
+                  Linking.openURL("https://forms.gle/Gt2HAgdTxMDHWV1e6");
+                }}
+              >
+                <MessageCircle color={colors.text} size={15} />
+                <Text style={[styles.accountMenuText, { color: colors.text, fontSize: getFontSize(14, largeText) }]}>
+                  Give Feedback
                 </Text>
               </Pressable>
               <View style={[styles.accountMenuDivider, { backgroundColor: colors.border }]} />
