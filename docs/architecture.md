@@ -38,6 +38,7 @@ flowchart LR
     ROUTE --> FLUX
     ROUTE --> RAGP
     ROUTE --> SENS
+    ROUTE --> NAV
     LLM --> GEM
     RAGP --> PG
     RAGP --> GEM
@@ -55,7 +56,7 @@ flowchart LR
 | Text-to-Flux | `backend/app/services/text_to_flux_service.py` | Natural language → safe Flux queries |
 | RAG | `backend/app/rag/*.py` | Chunk, embed, store, retrieve, generate |
 | Sensors | `backend/app/services/{influx_sensor_service,influx_query_service,sensor_service,sensor_scheduler}.py` | Ingestion + live readings |
-| Navigation | `backend/app/services/navigation_service.py` | Campus navigation data |
+| Navigation | `backend/app/services/{navigation_service,navigation_bootstrap_service}.py` | Campus graph: directions, nearest facility, location lookup |
 | Config | `backend/app/core/config.py` | Env loading + validation |
 
 ---
@@ -91,6 +92,9 @@ sequenceDiagram
 | `sensor_history` | Aggregates/trends/time-ranges ("average", "last week", "yesterday") | Text-to-Flux pipeline |
 | `sensor_live` | Current readings ("temperature right now", "humidity now") | Live sensor pipeline |
 | `exact_current_info` | Exact official facts (fees, links, calendars) | RAG with trusted-source guardrails |
+| `navigation_directions` | Step-by-step directions ("how do I get from A to B?") | Navigation service (Dijkstra) |
+| `navigation_nearest` | Nearest facility ("nearest bathroom", "closest library") | Navigation service (Euclidean) |
+| `navigation_where` | Location lookup ("where is the Library?") | Navigation service (DB query) |
 | `rag_specific` | Campus-specific retrieval (buildings, policies, services) | RAG pipeline |
 | `general_conceptual` | Broad conceptual/advice questions | RAG + LLM hybrid |
 | `normal_llm` | Fallback conversation | Gemini direct |
@@ -109,6 +113,9 @@ sequenceDiagram
 
 ### exact_current_info / rag_specific / general_conceptual (RAG)
 `rag_pipeline.generate_answer_with_diagnostics()` performs retrieval with confidence gating. Exact-info answers additionally pass through `_safe_exact_info_response()` and require trusted-source grounding. See §5.
+
+### navigation_directions / navigation_nearest / navigation_where (Campus Navigation)
+`navigation_service.answer_navigation_query()` dispatches to the appropriate handler. Directions use Dijkstra's shortest-path algorithm over the campus graph; nearest-facility uses Euclidean distance search; where-is performs a location lookup. See §7.
 
 ### normal_llm
 `llm_service.generate_response()` — a direct Gemini conversational reply.
@@ -162,7 +169,41 @@ These rules are enforced by `tests/test_flux_query_safety.py` and `tests/test_te
 
 ---
 
-## 7. Sensor System & Ingestion Loop
+## 7. Campus Navigation
+
+The navigation system provides location lookups, step-by-step directions, and nearest-facility searches over a structured campus graph stored in PostgreSQL.
+
+### Data model
+
+Three tables in PostgreSQL (created by `backend/app/db/campus_navigation_bootstrap.sql`):
+
+| Table | Purpose |
+|---|---|
+| `locations` | 96 campus nodes — buildings, accommodation, sports, transport, reserves, services. Each has a code, name, type, grid reference, and x/y coordinates. |
+| `facilities` | Points of interest within locations — bathrooms, libraries, labs, study spaces. |
+| `paths` | Weighted edges connecting locations. IDs 1–15 are manually curated; the rest are auto-generated at startup. |
+
+### Bootstrap
+
+On startup, `ensure_navigation_data_ready()` (`navigation_bootstrap_service.py`):
+
+1. Executes the bootstrap SQL to create tables and seed 16 core locations, 10 facilities, and 15 manual paths.
+2. Upserts a full catalog of 96 campus locations parsed from grid references (e.g., `"G5"` → x=7, y=5).
+3. Auto-generates paths between nearby locations (≤ 230 m, max 4 neighbours per node) and bridges disconnected graph components.
+
+### Query types
+
+| Intent | Handler | Algorithm |
+|---|---|---|
+| `navigation_directions` | `answer_directions_query()` | Extracts origin/destination → builds bidirectional graph → Dijkstra shortest path → numbered step-by-step directions with distance estimate. |
+| `navigation_nearest` | `answer_nearest_query()` | Extracts facility type + optional reference location → Euclidean distance over grid coordinates → nearest match with approximate metres. |
+| `navigation_where` | `answer_where_is_query()` | Extracts target → location alias resolution → DB lookup → grid reference and coordinates. |
+
+Location aliases (`dw` → Donald Whitehead, `tlc` → The Learning Commons, etc.) allow natural phrasing without exact names.
+
+---
+
+## 8. Sensor System & Ingestion Loop
 
 Sensor fields: **temperature, humidity, pressure, dew_point**. Capabilities: live readings, averages, min/max, trends, and monthly/yearly analysis.
 
@@ -175,13 +216,13 @@ On startup, `app/main.py`'s lifespan launches `run_sensor_ingestion_loop()` (`se
 
 ---
 
-## 8. Hallucination Guardrails
+## 9. Hallucination Guardrails
 
 The system deliberately prevents Gemini from inventing URLs, fees, schedules, or other official university information. When trusted grounding is unavailable, it acknowledges uncertainty and redirects users to official La Trobe resources. Guardrail behavior is covered by `tests/test_llm_guardrails.py` and `tests/test_url_ranking.py`.
 
 ---
 
-## 9. Startup & Configuration
+## 10. Startup & Configuration
 
 `backend/app/core/config.py` loads `backend/.env` and exposes a `Settings` object. The FastAPI lifespan (`app/main.py`):
 
@@ -193,12 +234,12 @@ PostgreSQL accepts both `POSTGRES_*` and `DB_*` naming styles; `config.py` mirro
 
 ---
 
-## 10. Mobile Architecture
+## 11. Mobile Architecture
 
 Expo Router (file-based routing) under `mobile/app/`. The root `_layout.tsx` wraps `AuthProvider` then `AppSettingsProvider` (**auth initializes before settings**). Authenticated tabs: `chat`, `index`, `profile`, `settings`; auth pages: `login`, `signup`. Firebase is initialized in `src/lib/firebase.ts`; chat threads in `src/lib/chatThreads.ts`; the API layer in `services/api.ts`. All frontend-exposed env vars use the `EXPO_PUBLIC_` prefix.
 
 ---
 
-## 11. Infrastructure
+## 12. Infrastructure
 
 `docker-compose.yml` provides local PostgreSQL 16 (port `5432`) and InfluxDB 2.7 (host port **`18086`**, mapped to the container's `8086`). Security workflows (CodeQL, Semgrep, OWASP ZAP) live in `.github/workflows/`.
