@@ -321,8 +321,9 @@ def answer_where_is_query(query: str) -> Tuple[str, str]:
             "navigation_needs_target",
         )
 
-    conn = _open_pg_connection()
+    conn = None
     try:
+        conn = _open_pg_connection()
         location = _find_location(conn, target)
     except Exception:
         return (
@@ -330,7 +331,8 @@ def answer_where_is_query(query: str) -> Tuple[str, str]:
             "navigation_db_error",
         )
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
     if not location:
         return (
@@ -353,8 +355,9 @@ def answer_nearest_query(query: str) -> Tuple[str, str]:
         )
 
     reference_text = _extract_reference_location(query)
-    conn = _open_pg_connection()
+    conn = None
     try:
+        conn = _open_pg_connection()
         origin = _find_location(conn, reference_text) if reference_text else None
         if not origin:
             origin = _find_location(conn, "agora")
@@ -372,7 +375,8 @@ def answer_nearest_query(query: str) -> Tuple[str, str]:
             "navigation_db_error",
         )
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
     if not nearest:
         return (
@@ -396,8 +400,9 @@ def answer_directions_query(query: str) -> Tuple[str, str]:
             "navigation_directions_needs_destination",
         )
 
-    conn = _open_pg_connection()
+    conn = None
     try:
+        conn = _open_pg_connection()
         origin = _find_location(conn, origin_text)
         destination = _find_location(conn, destination_text)
         if not origin or not destination:
@@ -415,7 +420,8 @@ def answer_directions_query(query: str) -> Tuple[str, str]:
             "navigation_db_error",
         )
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
     if not path_steps:
         return (

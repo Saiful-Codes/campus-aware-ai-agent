@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import psycopg2
+from psycopg2 import sql as psql
 
 from app.core.config import settings
 from app.services.postgres_service import open_postgres_connection
@@ -317,6 +318,46 @@ def _bootstrap_sql_path() -> Path:
     return Path(__file__).resolve().parents[1] / "db" / "campus_navigation_bootstrap.sql"
 
 
+def _ensure_database_exists() -> None:
+    """Create the configured Postgres database if it doesn't already exist.
+
+    Connects to the server's default `postgres` admin database using the same
+    host/port/user/password and issues CREATE DATABASE. No-op if it exists.
+    Silently returns on failure so the caller's own connect attempt can surface
+    the real error.
+    """
+    target_db = settings.POSTGRES_DB
+    if not target_db:
+        return
+
+    try:
+        admin_conn = psycopg2.connect(
+            connect_timeout=3,
+            dbname="postgres",
+            user=settings.POSTGRES_USER,
+            password=settings.POSTGRES_PASSWORD,
+            host=settings.POSTGRES_HOST,
+            port=settings.POSTGRES_PORT,
+        )
+    except Exception as exc:
+        logger.info("Skipping auto-create of database %s: %s", target_db, exc)
+        return
+
+    try:
+        admin_conn.autocommit = True
+        with admin_conn.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s;", (target_db,))
+            if cursor.fetchone() is None:
+                cursor.execute(
+                    psql.SQL("CREATE DATABASE {};").format(psql.Identifier(target_db))
+                )
+                logger.info("Created missing database: %s", target_db)
+    except Exception as exc:
+        logger.info("Could not auto-create database %s: %s", target_db, exc)
+    finally:
+        admin_conn.close()
+
+
 def bootstrap_navigation_data() -> Tuple[int, int, int]:
     sql_path = _bootstrap_sql_path()
     if not sql_path.exists():
@@ -324,6 +365,7 @@ def bootstrap_navigation_data() -> Tuple[int, int, int]:
 
     sql = sql_path.read_text(encoding="utf-8")
 
+    _ensure_database_exists()
     conn = _open_pg_connection()
     try:
         with conn.cursor() as cursor:
