@@ -1,4 +1,3 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useLocalSearchParams } from "expo-router";
 import { Menu, RefreshCw, Send } from "lucide-react-native";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -43,10 +42,12 @@ type Message = {
   isError?: boolean;
 };
 
-// ── Storage keys ─────────────────────────────────────────────────────────────
-
-const THREADS_KEY = "campus_ai_threads_v2";
-const ACTIVE_THREAD_KEY = "campus_ai_active_thread";
+// ── Guest sessions ───────────────────────────────────────────────────────────
+// Guest chat history is intentionally NOT persisted to local storage. It lives
+// only in component state for the lifetime of the session, so a fresh guest can
+// never inherit a previous guest's conversations. Authenticated users continue
+// to persist their history in Firestore (scoped per uid). Any legacy guest data
+// left on a device is purged at session boundaries — see clearGuestChatStorage().
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -166,38 +167,13 @@ export default function ChatScreen() {
       return unsubscribe;
     }
 
-    const load = async () => {
-      try {
-        const [rawThreads, rawMessages, rawActive] = await Promise.all([
-          AsyncStorage.getItem(THREADS_KEY),
-          AsyncStorage.getItem(`${THREADS_KEY}_messages`),
-          AsyncStorage.getItem(ACTIVE_THREAD_KEY),
-        ]);
-
-        let loadedThreads: ChatThread[] = rawThreads ? JSON.parse(rawThreads) : [];
-        const loadedMessages: Record<string, Message[]> = rawMessages
-          ? JSON.parse(rawMessages)
-          : {};
-
-        if (loadedThreads.length === 0) {
-          const id = generateId();
-          loadedThreads = [{ id, name: "New Chat", preview: "", updatedAt: Date.now() }];
-          loadedMessages[id] = [];
-        }
-
-        const activeId =
-          rawActive && loadedThreads.find((t) => t.id === rawActive)
-            ? rawActive
-            : loadedThreads[0].id;
-
-        setThreads(loadedThreads);
-        setThreadMessages(loadedMessages);
-        setActiveThreadId(activeId);
-      } catch (e) {
-        console.log("Failed to load threads", e);
-      }
-    };
-    load();
+    // Guest session: start with a clean, in-memory thread every time. Nothing is
+    // read from local storage, so a guest can never see a previous session's
+    // conversations.
+    const id = generateId();
+    setThreads([{ id, name: "New Chat", preview: "", updatedAt: Date.now() }]);
+    setThreadMessages({ [id]: [] });
+    setActiveThreadId(id);
   }, [isAuthenticatedUser, user?.uid]);
 
   // Keep route param chatId in sync with active thread.
@@ -263,27 +239,20 @@ export default function ChatScreen() {
 
   // ── Persist threads ───────────────────────────────────────────────────────
 
+  // Guest chat history is intentionally ephemeral (memory only) and authenticated
+  // history is persisted to Firestore, so there is nothing to write to local
+  // storage. These remain as no-ops to keep the thread-operation call sites
+  // simple and to guarantee guest conversations never touch disk.
   const persist = useCallback(
-    async (updatedThreads: ChatThread[], updatedMessages: Record<string, Message[]>) => {
-      if (isAuthenticatedUser) return;
-      try {
-        await Promise.all([
-          AsyncStorage.setItem(THREADS_KEY, JSON.stringify(updatedThreads)),
-          AsyncStorage.setItem(`${THREADS_KEY}_messages`, JSON.stringify(updatedMessages)),
-        ]);
-      } catch (e) {
-        console.log("Failed to persist threads", e);
-      }
+    async (_updatedThreads: ChatThread[], _updatedMessages: Record<string, Message[]>) => {
+      // no-op — see note above
     },
-    [isAuthenticatedUser]
+    []
   );
 
-  const persistActiveId = useCallback(async (id: string) => {
-    if (isAuthenticatedUser) return;
-    try {
-      await AsyncStorage.setItem(ACTIVE_THREAD_KEY, id);
-    } catch { }
-  }, [isAuthenticatedUser]);
+  const persistActiveId = useCallback(async (_id: string) => {
+    // no-op — see note above
+  }, []);
 
   // ── Thread operations ─────────────────────────────────────────────────────
 
