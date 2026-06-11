@@ -9,6 +9,7 @@ import {
 } from "firebase/auth";
 import { doc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import { auth, db } from "../lib/firebase";
+import { clearGuestChatStorage } from "../lib/guestChatStorage";
 
 export type SignupExtraUserData = {
   fullName: string;
@@ -117,6 +118,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       await signOut(auth);
       console.log("[AuthContext] signOut success");
+      // Purge any leftover guest chat data so the next guest starts clean.
+      await clearGuestChatStorage();
       // Clear local state immediately; onAuthStateChanged should also confirm this.
       setUser(null);
       setIsGuest(false);
@@ -127,8 +130,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // After signOut, onAuthStateChanged should fire and set user to null
   };
 
-  // Guest mode: set guest flag, clear user
+  // Guest mode: set guest flag, clear user.
+  // Purge any persisted guest chat data first so a fresh guest can never
+  // inherit a previous guest session's conversations (privacy). Guest chat
+  // history is kept in memory only for the lifetime of the session.
   const continueAsGuest = () => {
+    void clearGuestChatStorage();
     setUser(null);
     setIsGuest(true);
     setLoading(false);
